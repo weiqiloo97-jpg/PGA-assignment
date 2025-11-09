@@ -51,6 +51,7 @@ void handleFileMenu();
 bool isCSVFile(const char* filename);
 void processCSVFile(FILE* f, char (*targetWords)[50], int* targetWordCount);
 bool isFileCorrupted(const char* filePath, const char* fileContent, size_t contentSize); // New: File corruption detection
+void displayFileRecoveryTips(const char* problemType);
 
 // ====== New: Advanced Text Analysis Function Declarations ======
 int load_stopwords(char stopwords[][MAX_WORD_LENGTH]);
@@ -309,6 +310,14 @@ void loadTextFile(int fileNumber) {
 
     FILE* f = open_file_read(filePath);
     if (!f) {
+        printf("[!] Error: Cannot open file '%s'\n", filePath);
+        printf("Recovery instructions:\n");
+        printf("1. Make sure the file name is correct\n");
+        printf("2. Check if the file exists in the specified location\n");
+        printf("3. Move the file to the same directory as this program\n");
+        printf("4. Ensure you have read permissions for the file\n");
+        printf("5. If using spaces in path, enclose the entire path in quotes\n");
+        printf("6. Example: \"C:/My Documents/file.txt\" or just \"filename.txt\"\n");
         handleError("Cannot open input file");
         return;
     }
@@ -592,7 +601,13 @@ void advancedTextAnalysis() {
     // Open input file
     FILE* input_file = open_file_read(filePath);
     if (input_file == NULL) {
-        printf("ERROR: Cannot open file: %s\n", filePath);
+        printf("[!] Error: Cannot open analysis file '%s'\n", filePath);
+        printf("Recovery Guide:\n");
+        printf("1. Verify the file path is correct\n");
+        printf("2. Move the file to this program's directory\n");
+        printf("3. Ensure the file is a text file (.txt) or CSV (.csv)\n");
+        printf("4. Check file permissions\n");
+        printf("5. Try: analysis.txt or data.csv (in current folder)\n");
         return;
     }
 
@@ -677,7 +692,17 @@ void processCSVFile(FILE* f, char (*targetWords)[50], int* targetWordCount) {
     int columnCount = 0;
     char* columns[100]; // Assume max 100 columns
 
-    printf("[i] Processing CSV file...\n");
+    printf("Processing CSV file...\n");
+
+    if (f == NULL) {
+        printf("[!] Error: CSV file is not properly opened\n");
+        printf("Recovery Guide:\n");
+        printf("1. Ensure the CSV file is not corrupted\n");
+        printf("2. Make sure it's a valid CSV format\n");
+        printf("3. Try opening the file in a spreadsheet program first\n");
+        printf("4. Check if the file contains data (not empty)\n");
+        return;
+    }
 
     while (fgets(line, sizeof(line), f) && *targetWordCount < 30000) {
         // Remove line endings
@@ -976,8 +1001,15 @@ void saveResultsToFile() {
     FILE* f = fopen(path, "w");
 #endif
     if (!f) {
-        fprintf(stderr, "[!] open failed for: %s\n", path);
-        perror("reason: ");
+        printf("[!] Error: Cannot create output file '%s'\n", path);
+        printf("Recovery Guide:\n");
+        printf("1. Make sure the file name is valid\n");
+        printf("2. Check if you have write permissions in the target directory\n");
+        printf("3. Ensure the directory exists\n");
+        printf("4. Try a simpler file name in the current directory\n");
+        printf("5. Examples: \"results.txt\", \"analysis_report.txt\"\n");
+        printf("6. Close the file if it's already open in another program\n");
+        perror("Detailed error");
         handleError("Cannot open output file");
         return;
     }
@@ -1043,4 +1075,34 @@ void displayNegativityScale() {
 
 void displayWordOccurrence() {
     printf("Word occurrence analysis (placeholder)\n");
+}
+
+void displayFileRecoveryTips(const char* problemType) {
+    printf("\nFile Recovery Instructions\n");
+    
+    if (strcmp(problemType, "file_not_found") == 0) {
+        printf("Problem: File not found or cannot be opened\n");
+        printf("Solutions:\n");
+        printf("1. Check spelling of file name\n");
+        printf("2. Move file to program's directory\n");
+        printf("3. Use full path: C:/folder/file.txt\n");
+        printf("4. For spaces, use quotes: \"my file.txt\"\n");
+    }
+    else if (strcmp(problemType, "permission") == 0) {
+        printf("Problem: File permission denied\n");
+        printf("Solutions:\n");
+        printf("1. Run program as administrator\n");
+        printf("2. Check file/folder permissions\n");
+        printf("3. Try a different directory\n");
+    }
+    else if (strcmp(problemType, "corrupted") == 0) {
+        printf("Problem: File appears corrupted\n");
+        printf("Solutions:\n");
+        printf("1. Verify file is not empty\n");
+        printf("2. Ensure it's a valid text/CSV file\n");
+        printf("3. Try opening in another program\n");
+        printf("4. Check file encoding (should be UTF-8 or ANSI)\n");
+    }
+    
+    printf("Quick fix: Place file in directory as this program and use just the file name\n\n");
 }
