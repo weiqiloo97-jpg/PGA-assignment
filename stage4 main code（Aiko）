@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <ctype.h>
 #include <stdbool.h>
+#include <math.h>
 
 // -------- 全局变量（更新为支持多文件） --------
 char inputFilePath1[256];  // 文件1路径
@@ -58,6 +59,19 @@ void showFileHistory(int fileNumber);
 void handleFileMenu();
 bool isCSVFile(const char* filename);
 void processCSVFile(FILE* f, char (*targetWords)[50], int* targetWordCount);
+bool isFileCorrupted(const char* filePath, const char* fileContent, size_t contentSize); // New: File corruption detection
+void displayFileRecoveryTips(const char* problemType);
+typedef struct {
+    char word[50];
+    int  count;
+} Pair;
+
+static int  build_pairs_from_tokens(char (*words)[50], int wordCount, Pair out[], int maxOut);
+static void sort_pairs(Pair a[], int n, SortKey key, SortAlg alg);
+static int  load_toxicwords(void);
+static int  is_toxic_word(const char* w);
+void        menu_sort_and_report(void);   // 你在 main 里调用了它，提前声明
+
 
 // ====== 新增：高级文本分析函数声明 ======
 int load_stopwords(char stopwords[][MAX_WORD_LENGTH]);
@@ -131,6 +145,94 @@ static FILE* open_file_read(const char* pathIn) {
     return f;
 }
 
+//file corruption detection
+bool isFileCorrupted(const char* filePath, const char* fileContent, size_t contentSize) {
+    if (contentSize == 0) {
+        printf("[!] Error : File is empty\n");
+        return false; // Empty file is not considered corrupted, just no content
+    }
+
+    int totalChars = 0;
+    int printableChars = 0;
+    int controlChars = 0;
+    int consecutiveNonsense = 0;
+    int maxConsecutiveNonsense = 0;
+    int wordLikeSequences = 0;
+
+    // Analyze file content characteristics
+    for (size_t i = 0; i < contentSize; i++) {
+        unsigned char c = (unsigned char)fileContent[i];
+        totalChars++;
+
+        // Printable characters (including spaces, punctuation)
+        if (isprint(c) || c == '\t' || c == '\n' || c == '\r') {
+            printableChars++;
+            consecutiveNonsense = 0;
+
+            // Detect word-like sequences (letter sequences)
+            if (isalpha(c)) {
+                // Check if this is the start of a word
+                if (i == 0 || !isalpha((unsigned char)fileContent[i - 1])) {
+                    // Check the length of this letter sequence
+                    size_t j = i;
+                    int wordLen = 0;
+                    while (j < contentSize && isalpha((unsigned char)fileContent[j])) {
+                        wordLen++;
+                        j++;
+                    }
+                    if (wordLen >= 2 && wordLen <= 20) { // Reasonable word length
+                        wordLikeSequences++;
+                    }
+                }
+            }
+        }
+        else {
+            // Control characters or non-printable characters
+            controlChars++;
+            consecutiveNonsense++;
+            if (consecutiveNonsense > maxConsecutiveNonsense) {
+                maxConsecutiveNonsense = consecutiveNonsense;
+            }
+        }
+    }
+
+    // Calculate various ratios
+    double printableRatio = (double)printableChars / totalChars;
+    double controlCharRatio = (double)controlChars / totalChars;
+    double wordDensity = (double)wordLikeSequences / (contentSize / 100.0); // Words per 100 characters
+
+    printf("[i] File analysis: %zu chars, %.1f%% printable, %.1f%% control, word density: %.1f/100chars\n", contentSize, printableRatio * 100, controlCharRatio * 100, wordDensity);
+
+    // Corrupted file detection rules
+    bool likelyCorrupted = false;
+    const char* reason = NULL;
+
+    if (printableRatio < 0.60) { //less than 60% printable characters
+        likelyCorrupted = true;
+        reason = "low percentage of printable characters";
+    }
+    else if (controlCharRatio > 0.40) { //more than 40% control characters
+        likelyCorrupted = true;
+        reason = "high percentage of control characters";
+    }
+    else if (maxConsecutiveNonsense > 10) { //more than 10 consecutive nonsense characters
+        likelyCorrupted = true;
+        reason = "long sequences of nonsense characters";
+    }
+    else if (wordDensity < 0.5 && contentSize > 100) { //extremely low word density in large files
+        likelyCorrupted = true;
+        reason = "extremely low word density";
+    }
+
+    if (likelyCorrupted) {
+        printf("[X] Error: File you loaded seems to be corrupted. Reason: %s\n", reason);
+        printf("[X] The file may contain nonsense characters.\n");
+        return true; //stop loading if file is corrupted
+    }
+
+    return false; //file is normal 
+}
+
 // ====== 主程序（更新了选项1的处理）======
 int main() {
     int userChoice;
@@ -145,7 +247,7 @@ int main() {
         printf("6. Advanced Text Analysis (with stopwords filtering)\n");
         printf("7. Translate text to English\n");
         printf("8. Exit program\n");
-        printf("Enter a choice or type 8 to exit the system: ");
+        printf("Type in a choice or type 8 to exit the system: ");
 
         if (scanf("%d", &userChoice) != 1) {
             // 清理错误输入
@@ -199,7 +301,7 @@ int main() {
         break;
 
         case 4:
-            sortAndDisplayTopNWords();
+            menu_sort_and_report();
             break;
 
         case 5:
@@ -227,6 +329,100 @@ int main() {
             printf("%d is an invalid choice. Please enter a number between 1 and 8.\n", userChoice);
         }
     }
+}
+
+// ====== Updated: Load Text File Function (Supports CSV and corrupted file detection) ======
+void loadTextFile(int fileNumber) {
+    char* filePath = (fileNumber == 1) ? inputFilePath1 : inputFilePath2;
+    char (*targetWords)[50] = (fileNumber == 1) ? words1 : words2;
+    int* targetWordCount = (fileNumber == 1) ? &wordCount1 : &wordCount2;
+    bool* targetFileLoaded = (fileNumber == 1) ? &file1Loaded : &file2Loaded;
+
+    FILE* f = open_file_read(filePath);
+    if (!f) {
+        printf("[!] Error: Cannot open file '%s'\n", filePath);
+        printf("Recovery instructions:\n");
+        printf("1. Make sure the file name is correct\n");
+        printf("2. Check if the file exists in the specified location\n");
+        printf("3. Move the file to the same directory as this program\n");
+        printf("4. Ensure you have read permissions for the file\n");
+        printf("5. If using spaces in path, enclose the entire path in quotes\n");
+        printf("6. Example: \"C:/My Documents/file.txt\" or just \"filename.txt\"\n");
+        handleError("Cannot open input file");
+        return;
+    }
+
+    *targetWordCount = 0;
+
+    // Remove quotes for file type detection
+    char cleanPath[256];
+    strncpy(cleanPath, filePath, sizeof(cleanPath) - 1);
+    cleanPath[sizeof(cleanPath) - 1] = '\0';
+    strip_quotes(cleanPath);
+
+    // ====== New: File content pre-scan and corruption detection ======
+    printf("[i] Pre-scanning file for corruption detection...\n");
+
+    // Read entire file content for detection
+    fseek(f, 0, SEEK_END);
+    long fileSize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (fileSize > 0) {
+        char* fileContent = (char*)malloc(fileSize + 1);
+        if (fileContent) {
+            size_t bytesRead = fread(fileContent, 1, fileSize, f);
+            fileContent[bytesRead] = '\0';
+
+            // Detect if file is corrupted
+            if (isFileCorrupted(cleanPath, fileContent, bytesRead)) {
+                free(fileContent);
+                fclose(f);
+                *targetFileLoaded = false;
+                return; // Stop loading corrupted file
+            }
+
+            free(fileContent);
+        }
+        // Reset file pointer to beginning
+        fseek(f, 0, SEEK_SET);
+    }
+
+    // Check file type and process accordingly
+    if (isCSVFile(cleanPath)) {
+        printf("[i] Detected CSV file format - now converting columns to text...\n");
+        processCSVFile(f, targetWords, targetWordCount);
+        printf("[✓] CSV file converted to text format\n");
+    }
+    else {
+        printf("[i] Detected text file format - processing as text...\n");
+        // Original text file processing logic
+        char line[4096];
+        while (fgets(line, sizeof(line), f)) {
+            normalize_line(line); // Lowercase + non-alphanumeric → space
+            char* tok = strtok(line, " \t\r\n");
+            while (tok) {
+                size_t L = strlen(tok);
+                if (L > 0 && L < sizeof(targetWords[0])) {
+                    if (*targetWordCount < 30000) {
+                        strcpy(targetWords[*targetWordCount], tok);
+                        (*targetWordCount)++;
+                    }
+                    else {
+                        // Stop if capacity exceeded
+                        printf("[!] Warning: Reached maximum token limit (30000)\n");
+                        break;
+                    }
+                }
+                tok = strtok(NULL, " \t\r\n");
+            }
+            if (*targetWordCount >= 30000) break;
+        }
+    }
+
+    fclose(f);
+    *targetFileLoaded = true;
+    printf("[✓] Loaded %d tokens from File %d.\n", *targetWordCount, fileNumber);
 }
 
 // ====== 新增：高级文本分析函数实现 ======
@@ -276,7 +472,7 @@ int tokenize_and_clean(char* text, struct WordInfo words[], char stopwords[][MAX
     char* token;
     const char* delimiters = " .,!?;:\"\'()[]{}@#\n\t\r";
 
-    printf("Text length: %lu characters\n", strlen(text));
+    printf("Text length: %zu characters\n", strlen(text));
 
     // Create a copy of text with size limit
     char* text_copy = malloc(strlen(text) + 1);
@@ -462,7 +658,7 @@ void advancedTextAnalysis() {
     fclose(input_file);
 
     printf("File reading completed. Total raw words: %d\n", total_words_raw);
-    printf("Text buffer used: %lu/%d characters\n", strlen(text), MAX_TEXT_LENGTH);
+    printf("Text buffer used: %zu/%d characters\n", strlen(text), MAX_TEXT_LENGTH);
 
     if (strlen(text) == 0) {
         printf("ERROR: No content read from file\n");
@@ -669,65 +865,7 @@ void showFileHistory(int fileNumber) {
     printf("\n");
 }
 
-// ====== 更新：加载文本文件函数（支持CSV） ======
-void loadTextFile(int fileNumber) {
-    char* filePath = (fileNumber == 1) ? inputFilePath1 : inputFilePath2;
-    char (*targetWords)[50] = (fileNumber == 1) ? words1 : words2;
-    int* targetWordCount = (fileNumber == 1) ? &wordCount1 : &wordCount2;
-    bool* targetFileLoaded = (fileNumber == 1) ? &file1Loaded : &file2Loaded;
-
-    FILE* f = open_file_read(filePath);
-    if (!f) {
-        handleError("Cannot open input file");
-        return;
-    }
-
-    *targetWordCount = 0;
-
-    // Remove quotes for file type detection
-    char cleanPath[256];
-    strncpy(cleanPath, filePath, sizeof(cleanPath) - 1);
-    cleanPath[sizeof(cleanPath) - 1] = '\0';
-    strip_quotes(cleanPath);
-
-    // 检查文件类型并相应处理
-    if (isCSVFile(cleanPath)) {
-        printf("[i] Detected CSV file format - now converting columns to text...\n");
-        processCSVFile(f, targetWords, targetWordCount);
-        printf("[✓] CSV file converted to text format\n");
-    }
-    else {
-        printf("[i] Detected text file format - processing as text...\n");
-        // 原有的文本文件处理逻辑
-        char line[4096];
-        while (fgets(line, sizeof(line), f)) {
-            normalize_line(line); // 小写化 + 非字母数字 → 空格
-            char* tok = strtok(line, " \t\r\n");
-            while (tok) {
-                size_t L = strlen(tok);
-                if (L > 0 && L < sizeof(targetWords[0])) {
-                    if (*targetWordCount < 30000) {
-                        strcpy(targetWords[*targetWordCount], tok);
-                        (*targetWordCount)++;
-                    }
-                    else {
-                        // 超容量就停止
-                        printf("[!] Warning: Reached maximum token limit (30000)\n");
-                        break;
-                    }
-                }
-                tok = strtok(NULL, " \t\r\n");
-            }
-            if (*targetWordCount >= 30000) break;
-        }
-    }
-
-    fclose(f);
-    *targetFileLoaded = true;
-    printf("[✓] Loaded %d tokens from File %d.\n", *targetWordCount, fileNumber);
-}
-
-// ====== 更新：显示通用统计信息 ======
+// ====== Updated: Display General Statistics ======
 void displayGeneralStatistics() {
     if (!file1Loaded && !file2Loaded) {
         printf("[!] No text files loaded. Use menu 1 first.\n");
@@ -765,24 +903,294 @@ void displayGeneralStatistics() {
         printf("  Unique words        : %d\n", unique2);
     }
 }
+// ====== Updated: Sort and Display Top N Words ======
+void sortAndDisplayTopNWords() {
+    if (!file1Loaded && !file2Loaded) {
+        printf("[!] No text files loaded. Use menu 1 first.\n");
+        return;
+    }
+
+    int fileChoice;
+    printf("Choose file to analyze:\n");
+    if (file1Loaded) printf("1 - File 1 (%s)\n", isCSVFile(inputFilePath1) ? "CSV" : "Text");
+    if (file2Loaded) printf("2 - File 2 (%s)\n", isCSVFile(inputFilePath2) ? "CSV" : "Text");
+    printf("Enter choice: ");
+
+    if (scanf("%d", &fileChoice) != 1) {
+        int c; while ((c = getchar()) != '\n' && c != EOF);
+        printf("Invalid number.\n");
+        return;
+    }
+    int c; while ((c = getchar()) != '\n' && c != EOF);
+
+    char (*words)[50];
+    int wordCount;
+    char* filePath;
+
+    if (fileChoice == 1 && file1Loaded) {
+        words = words1;
+        wordCount = wordCount1;
+        filePath = inputFilePath1;
+    }
+    else if (fileChoice == 2 && file2Loaded) {
+        words = words2;
+        wordCount = wordCount2;
+        filePath = inputFilePath2;
+    }
+    else {
+        printf("Invalid file choice or file not loaded.\n");
+        return;
+    }
+
+    int n;
+    printf("Enter N (a number) to get the top words: ");
+    if (scanf("%d", &n) != 1) {
+        int c; while ((c = getchar()) != '\n' && c != EOF);
+        printf("Invalid number.\n");
+        return;
+    }
+    int d; while ((d = getchar()) != '\n' && d != EOF);
+
+    // Build unique word and frequency table
+    char uniq[5000][50];
+    int  freq[5000];
+    int  ucnt = 0;
+
+    for (int i = 0; i < wordCount; i++) {
+        int k = -1;
+        for (int j = 0; j < ucnt; j++) {
+            if (strcmp(words[i], uniq[j]) == 0) { k = j; break; }
+        }
+        if (k == -1) {
+            strcpy(uniq[ucnt], words[i]);
+            freq[ucnt] = 1;
+            ucnt++;
+        }
+        else {
+            freq[k]++;
+        }
+    }
+
+    // Simple sort: frequency descending, same frequency alphabetical
+    for (int i = 0; i < ucnt - 1; i++) {
+        for (int j = i + 1; j < ucnt; j++) {
+            if (freq[j] > freq[i] || (freq[j] == freq[i] && strcmp(uniq[j], uniq[i]) < 0)) {
+                int tf = freq[i]; freq[i] = freq[j]; freq[j] = tf;
+                char tmp[50]; strcpy(tmp, uniq[i]); strcpy(uniq[i], uniq[j]); strcpy(uniq[j], tmp);
+            }
+        }
+    }
+
+    if (n > ucnt) n = ucnt;
+    printf("Top %d words from File %d (%s):\n", n, fileChoice, isCSVFile(filePath) ? "CSV" : "Text");
+    for (int i = 0; i < n; i++) {
+        printf("%2d. %-20s %d\n", i + 1, uniq[i], freq[i]);
+    }
+}
 
 // --- Stage 4: stub implementations to satisfy linker ---
 void sort_and_show_topN_all(SortKey key, SortAlg alg, int topN) {
-    printf("[Stage4] Use menu 4 (sortAndDisplayTopNWords) for TopN. (stub)\n");
-}
-void sort_and_show_topN_toxic(SortAlg alg, int topN) {
-    printf("[Stage4] Toxic-only TopN not implemented yet. (stub)\n");
-}
-void compare_algorithms_topN(int topN) {
-    printf("[Stage4] Algorithm comparison not implemented yet. (stub)\n");
-}
-void show_extra_summary(void) {
-    printf("[Stage4] Extra summary (toxic ratio etc.) not implemented yet. (stub)\n");
-}
-void list_alpha_all(void) {
-    printf("[Stage4] Alphabetical full listing not implemented yet. (stub)\n");
+    if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
+
+    // 选用“当前已加载”的一个文件（优先 File1）
+    char (*w)[50] = file1Loaded ? words1 : words2;
+    int wc = file1Loaded ? wordCount1 : wordCount2;
+
+    Pair* arr = (Pair*)malloc(sizeof(Pair) * 6000);
+    if (!arr) { printf("[!] OOM\n"); return; }
+    int n = build_pairs_from_tokens(w, wc, arr, 6000);
+
+    sort_pairs(arr, n, key, alg);
+
+    if (topN > n) topN = n;
+    printf("\n-- Top %d (%s, %s) --\n",
+        topN,
+        key == KEY_FREQ_DESC ? "freq desc" : "A→Z",
+        alg == ALG_BUBBLE ? "Bubble" : (alg == ALG_QUICK ? "Quick" : "Merge"));
+    for (int i = 0; i < topN; ++i) {
+        printf("%2d. %-20s %d\n", i + 1, arr[i].word, arr[i].count);
+    }
+    free(arr);
 }
 
+void sort_and_show_topN_toxic(SortAlg alg, int topN) {
+    if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
+    load_toxicwords();
+
+    char (*w)[50] = file1Loaded ? words1 : words2;
+    int wc = file1Loaded ? wordCount1 : wordCount2;
+
+    // 先做全量词频
+    Pair* all = (Pair*)malloc(sizeof(Pair) * 6000);
+    Pair* tox = (Pair*)malloc(sizeof(Pair) * 6000);
+    if (!all || !tox) { printf("[!] OOM\n"); free(all); free(tox); return; }
+
+    int nAll = build_pairs_from_tokens(w, wc, all, 6000);
+
+    // 过滤毒词
+    int nT = 0;
+    for (int i = 0; i < nAll; ++i) {
+        if (is_toxic_word(all[i].word)) tox[nT++] = all[i];
+    }
+
+    if (nT == 0) { printf("[i] No toxic words found.\n"); free(all); free(tox); return; }
+
+    sort_pairs(tox, nT, KEY_FREQ_DESC, alg); // 毒词一般按频率降序
+    if (topN > nT) topN = nT;
+
+    printf("\n-- Toxic Top %d (freq desc, %s) --\n",
+        topN, alg == ALG_BUBBLE ? "Bubble" : (alg == ALG_QUICK ? "Quick" : "Merge"));
+    for (int i = 0; i < topN; ++i) {
+        printf("%2d. %-20s %d\n", i + 1, tox[i].word, tox[i].count);
+    }
+
+    free(all); free(tox);
+}
+
+void compare_algorithms_topN(int topN) {
+    if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
+    char (*w)[50] = file1Loaded ? words1 : words2;
+    int wc = file1Loaded ? wordCount1 : wordCount2;
+
+    Pair* base = (Pair*)malloc(sizeof(Pair) * 6000);
+    Pair* a = (Pair*)malloc(sizeof(Pair) * 6000);
+    Pair* b = (Pair*)malloc(sizeof(Pair) * 6000);
+    Pair* c = (Pair*)malloc(sizeof(Pair) * 6000);
+    if (!base || !a || !b || !c) { printf("[!] OOM\n"); free(base); free(a); free(b); free(c); return; }
+
+    int n = build_pairs_from_tokens(w, wc, base, 6000);
+    memcpy(a, base, sizeof(Pair) * n);
+    memcpy(b, base, sizeof(Pair) * n);
+    memcpy(c, base, sizeof(Pair) * n);
+
+    // 同一排序键，比较算法输出
+    SortKey key = g_key; // 用当前选择键
+    sort_pairs(a, n, key, ALG_BUBBLE);
+    sort_pairs(b, n, key, ALG_QUICK);
+    sort_pairs(c, n, key, ALG_MERGE);
+
+    if (topN > n) topN = n;
+    printf("\n== Algorithm Comparison (key=%s) ==\n", key == KEY_FREQ_DESC ? "freq desc" : "A→Z");
+
+    printf("-- Bubble --\n");
+    for (int i = 0; i < topN; i++) printf("%2d. %-20s %d\n", i + 1, a[i].word, a[i].count);
+
+    printf("-- Quick  --\n");
+    for (int i = 0; i < topN; i++) printf("%2d. %-20s %d\n", i + 1, b[i].word, b[i].count);
+
+    printf("-- Merge  --\n");
+    for (int i = 0; i < topN; i++) printf("%2d. %-20s %d\n", i + 1, c[i].word, c[i].count);
+
+    // 可选：检测前三十是否完全一致
+    int agree = 1;
+    int cap = topN < 30 ? topN : 30;
+    for (int i = 0; i < cap; i++) {
+        if (strcmp(a[i].word, b[i].word) != 0 || strcmp(a[i].word, c[i].word) != 0) { agree = 0; break; }
+    }
+    printf("[i] Top %d %s across algorithms.\n", cap, agree ? "are identical" : "DIFFER (tie-breaking/stability)");
+    free(base); free(a); free(b); free(c);
+}
+
+void show_extra_summary(void) {
+    if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
+    load_toxicwords();
+
+    char (*w)[50] = file1Loaded ? words1 : words2;
+    int wc = file1Loaded ? wordCount1 : wordCount2;
+
+    int toxic_tokens = 0, nontoxic_tokens = 0;
+    Pair* all = (Pair*)malloc(sizeof(Pair) * 6000);
+    if (!all) { printf("[!] OOM\n"); return; }
+    int n = build_pairs_from_tokens(w, wc, all, 6000);
+
+    for (int i = 0; i < n; i++) {
+        if (is_toxic_word(all[i].word)) toxic_tokens += all[i].count;
+        else                             nontoxic_tokens += all[i].count;
+    }
+    int total = toxic_tokens + nontoxic_tokens;
+    double tox_ratio = total ? (100.0 * toxic_tokens / total) : 0.0;
+
+    // 也可计算“类型”层面的比例（unique）
+    int toxic_types = 0, nontoxic_types = 0;
+    for (int i = 0; i < n; i++) {
+        if (is_toxic_word(all[i].word)) toxic_types++;
+        else                            nontoxic_types++;
+    }
+
+    printf("\n=== Extra Summary ===\n");
+    printf("Tokens  : toxic=%d, non-toxic=%d, total=%d, toxic ratio=%.2f%%\n",
+        toxic_tokens, nontoxic_tokens, total, tox_ratio);
+    printf("Types   : toxic=%d, non-toxic=%d, total=%d\n",
+        toxic_types, nontoxic_types, toxic_types + nontoxic_types);
+
+    free(all);
+}
+
+void list_alpha_all(void) {
+    if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
+    char (*w)[50] = file1Loaded ? words1 : words2;
+    int wc = file1Loaded ? wordCount1 : wordCount2;
+
+    Pair* arr = (Pair*)malloc(sizeof(Pair) * 6000);
+    if (!arr) { printf("[!] OOM\n"); return; }
+    int n = build_pairs_from_tokens(w, wc, arr, 6000);
+    sort_pairs(arr, n, KEY_ALPHA, g_alg); // 用当前算法做字母序
+
+    int show = n < 200 ? n : 200;
+    printf("\n-- Alphabetical listing (first %d/%d) --\n", show, n);
+    for (int i = 0; i < show; i++) printf("%-20s %d\n", arr[i].word, arr[i].count);
+    if (n > 200) printf("... (%d more)\n", n - 200);
+    free(arr);
+}
+
+
+// 把 tokens -> 唯一词频 Pair[]，返回唯一词个数
+static int build_pairs_from_tokens(char (*words)[50], int wordCount, Pair out[], int maxOut) {
+    int ucnt = 0;
+    for (int i = 0; i < wordCount; ++i) {
+        int k = -1;
+        for (int j = 0; j < ucnt; ++j) {
+            if (strcmp(words[i], out[j].word) == 0) { k = j; break; }
+        }
+        if (k == -1) {
+            if (ucnt >= maxOut) break;
+            strcpy(out[ucnt].word, words[i]);
+            out[ucnt].count = 1;
+            ++ucnt;
+        }
+        else {
+            out[k].count++;
+        }
+    }
+    return ucnt;
+}
+
+static int g_toxic_loaded = 0;
+static int g_toxic_count = 0;
+static char g_toxic[500][MAX_WORD_LENGTH];
+
+static int load_toxicwords(void) {
+    if (g_toxic_loaded) return g_toxic_count;
+    FILE* f = fopen("toxicwords.txt", "r");
+    if (!f) { printf("[!] Cannot open toxicwords.txt (toxic TopN will be empty)\n"); return 0; }
+    char line[MAX_WORD_LENGTH];
+    while (g_toxic_count < 500 && fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        for (int i = 0; line[i]; ++i) line[i] = (char)tolower((unsigned char)line[i]);
+        if (line[0]) strcpy(g_toxic[g_toxic_count++], line);
+    }
+    fclose(f);
+    g_toxic_loaded = 1;
+    printf("[i] Loaded %d toxic terms\n", g_toxic_count);
+    return g_toxic_count;
+}
+
+static int is_toxic_word(const char* w) {
+    for (int i = 0; i < g_toxic_count; ++i)
+        if (strcmp(w, g_toxic[i]) == 0) return 1;
+    return 0;
+
+}
 
 void menu_sort_and_report(void) {
     int sub = -1;
@@ -809,13 +1217,13 @@ void menu_sort_and_report(void) {
         }
 
         switch (sub) {
-        case 1: {   
+        case 1: {
             //设置排序键（频率/字母）
             int k;
             printf("Choose key: 1=Frequency desc (ties→alpha), 2=Alphabetical : ");
             if (scanf("%d", &k) == 1) g_key = (k == 2 ? KEY_ALPHA : KEY_FREQ_DESC);
         } break;
-        case 2: {      
+        case 2: {
             //设置算法（冒泡/快速/归并）
             int a;
             printf("Choose algorithm: 1=Bubble  2=Quick  3=Merge : ");
@@ -855,12 +1263,6 @@ void menu_sort_and_report(void) {
         }
     } while (sub != 0);
 }
-
-// ====== Stage 4 helpers: comparators + 3 algorithms ======
-typedef struct {
-    char word[50];
-    int  count;
-} Pair;
 
 // 比较器：返回 <0 表示 a 应排在 b 前
 static int cmp_pairs(const Pair* a, const Pair* b, SortKey key) {
@@ -944,110 +1346,7 @@ static void sort_pairs(Pair a[], int n, SortKey key, SortAlg alg) {
     }
 }
 
-
-// ====== 更新：排序和显示TopN单词 ======
-void sortAndDisplayTopNWords() {
-    if (!file1Loaded && !file2Loaded) {
-        printf("[!] No text files loaded. Use menu 1 first.\n");
-        return;
-    }
-
-    int fileChoice;
-    printf("Choose file to analyze:\n");
-    if (file1Loaded) printf("1 - File 1 (%s)\n", isCSVFile(inputFilePath1) ? "CSV" : "Text");
-    if (file2Loaded) printf("2 - File 2 (%s)\n", isCSVFile(inputFilePath2) ? "CSV" : "Text");
-    printf("Enter choice: ");
-
-    if (scanf("%d", &fileChoice) != 1) {
-        int c; while ((c = getchar()) != '\n' && c != EOF);
-        printf("Invalid number.\n");
-        return;
-    }
-    int c; while ((c = getchar()) != '\n' && c != EOF);
-
-    char (*words)[50];
-    int wordCount;
-    char* filePath;
-
-    if (fileChoice == 1 && file1Loaded) {
-        words = words1;
-        wordCount = wordCount1;
-        filePath = inputFilePath1;
-    }
-    else if (fileChoice == 2 && file2Loaded) {
-        words = words2;
-        wordCount = wordCount2;
-        filePath = inputFilePath2;
-    }
-    else {
-        printf("Invalid file choice or file not loaded.\n");
-        return;
-    }
-
-    // 让用户在本次 Top N 里选择排序键与算法（不改主菜单其它逻辑）
-    int keySel = 0, algSel = 0, n = 0;
-    printf("Sort KEY? 1=Frequency desc (ties→alpha), 2=Alphabetical (A→Z): ");
-    if (scanf("%d", &keySel) != 1) { while ((c = getchar()) != '\n' && c != EOF); keySel = 1; }
-    while ((c = getchar()) != '\n' && c != EOF);
-    g_key = (keySel == 2) ? KEY_ALPHA : KEY_FREQ_DESC;
-
-    printf("Algorithm? 1=Bubble  2=Quick  3=Merge: ");
-    if (scanf("%d", &algSel) != 1) { while ((c = getchar()) != '\n' && c != EOF); algSel = 2; }
-    while ((c = getchar()) != '\n' && c != EOF);
-    g_alg = (algSel == 1) ? ALG_BUBBLE : (algSel == 3 ? ALG_MERGE : ALG_QUICK);
-
-    printf("Enter N (a number) to get the top words: ");
-    if (scanf("%d", &n) != 1 || n <= 0) {
-        while ((c = getchar()) != '\n' && c != EOF);
-        printf("Invalid number.\n");
-        return;
-    }
-    while ((c = getchar()) != '\n' && c != EOF);
-
-    // 构建唯一词与频次表（与原逻辑一致，只是换成 Pair）
-    // 上限与原来一致：最多 5000 个唯一词（够 Stage 需求）
-    Pair arr[5000];
-    int  ucnt = 0;
-
-    for (int i = 0; i < wordCount; i++) {
-        int k = -1;
-        for (int j = 0; j < ucnt; j++) {
-            if (strcmp(words[i], arr[j].word) == 0) { k = j; break; }
-        }
-        if (k == -1) {
-            if (ucnt >= 5000) {
-                printf("[!] Warning: unique word cap (5000) reached. Truncating.\n");
-                break;
-            }
-            strcpy(arr[ucnt].word, words[i]);
-            arr[ucnt].count = 1;
-            ucnt++;
-        }
-        else {
-            arr[k].count++;
-        }
-    }
-
-    if (ucnt == 0) {
-        printf("No tokens available to sort.\n");
-        return;
-    }
-    if (n > ucnt) n = ucnt;
-
-    // 使用所选算法 + 键进行排序
-    sort_pairs(arr, ucnt, g_key, g_alg);
-
-    printf("\nTop %d words from File %d (%s)\n", n, fileChoice, isCSVFile(filePath) ? "CSV" : "Text");
-    printf("Sorted by: %s | Algorithm: %s\n",
-        (g_key == KEY_FREQ_DESC ? "Frequency desc" : "Alphabetical"),
-        (g_alg == ALG_BUBBLE ? "Bubble" : (g_alg == ALG_QUICK ? "Quick" : "Merge")));
-    for (int i = 0; i < n; i++) {
-        printf("%2d. %-20s %d\n", i + 1, arr[i].word, arr[i].count);
-    }
-}
-
-
-// ====== 其他函数保持不变 ======
+// ====== Other Functions Remain Unchanged ======
 void displayToxicWordAnalysis() {
     if (!file1Loaded && !file2Loaded) {
         printf("[!] No text loaded. Use menu 1 first.\n");
@@ -1074,17 +1373,24 @@ void saveResultsToFile() {
     FILE* f = fopen(path, "w");
 #endif
     if (!f) {
-        fprintf(stderr, "[!] open failed for: %s\n", path);
-        perror("reason: ");
+        printf("[!] Error: Cannot create output file '%s'\n", path);
+        printf("Recovery Guide:\n");
+        printf("1. Make sure the file name is valid\n");
+        printf("2. Check if you have write permissions in the target directory\n");
+        printf("3. Ensure the directory exists\n");
+        printf("4. Try a simpler file name in the current directory\n");
+        printf("5. Examples: \"results.txt\", \"analysis_report.txt\"\n");
+        printf("6. Close the file if it's already open in another program\n");
+        perror("Detailed error");
         handleError("Cannot open output file");
         return;
     }
 
-    // 这里简化处理，只保存第一个文件的数据
+    // Simplified processing: only save first file's data
     char (*words)[50] = words1;
     int wordCount = wordCount1;
 
-    // 计算唯一词与频次
+    // Calculate unique words and frequencies
     char uniq[1000][50];
     int  freq[5000];
     int  ucnt = 0;
@@ -1141,4 +1447,34 @@ void displayNegativityScale() {
 
 void displayWordOccurrence() {
     printf("Word occurrence analysis (placeholder)\n");
+}
+
+void displayFileRecoveryTips(const char* problemType) {
+    printf("\nFile Recovery Instructions\n");
+
+    if (strcmp(problemType, "file_not_found") == 0) {
+        printf("Problem: File not found or cannot be opened\n");
+        printf("Solutions:\n");
+        printf("1. Check spelling of file name\n");
+        printf("2. Move file to program's directory\n");
+        printf("3. Use full path: C:/folder/file.txt\n");
+        printf("4. For spaces, use quotes: \"my file.txt\"\n");
+    }
+    else if (strcmp(problemType, "permission") == 0) {
+        printf("Problem: File permission denied\n");
+        printf("Solutions:\n");
+        printf("1. Run program as administrator\n");
+        printf("2. Check file/folder permissions\n");
+        printf("3. Try a different directory\n");
+    }
+    else if (strcmp(problemType, "corrupted") == 0) {
+        printf("Problem: File appears corrupted\n");
+        printf("Solutions:\n");
+        printf("1. Verify file is not empty\n");
+        printf("2. Ensure it's a valid text/CSV file\n");
+        printf("3. Try opening in another program\n");
+        printf("4. Check file encoding (should be UTF-8 or ANSI)\n");
+    }
+
+    printf("Quick fix: Place file in directory as this program and use just the file name\n\n");
 }
