@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <stdbool.h>
 #include <math.h>
+#include <time.h>
 
 // -------- 全局变量（更新为支持多文件） --------
 char inputFilePath1[256];  // 文件1路径
@@ -38,11 +39,41 @@ struct WordInfo {
 
 typedef enum { KEY_FREQ_DESC, KEY_ALPHA } SortKey;  //排序“键”（频率降序 / 字母序）
 typedef enum { ALG_BUBBLE, ALG_QUICK, ALG_MERGE } SortAlg;  //排序算法类型
+typedef struct {
+    char word[50];
+    int  count;
+} Pair;
+typedef struct {
+    long long comps;   // 比较次数
+    long long moves;   // 元素移动/交换次数
+    double    ms;      // 排序耗时(ms)
+} SortStats;
+
+static SortStats g_stats;
+
+static void stats_reset(void) { g_stats.comps = 0; g_stats.moves = 0; g_stats.ms = 0.0; }
+
+// 计比较
+static inline int cmp_with_stats(const Pair* a, const Pair* b, SortKey key) {
+    g_stats.comps++;
+    return cmp_pairs(a, b, key);
+}
+
+// 计移动（交换/写入）
+static inline void swap_pair(Pair* x, Pair* y) {
+    Pair t = *x; *x = *y; *y = t; g_stats.moves += 3; // 粗略按3次赋值算
+}
+
+static inline double now_ms(void) {
+    return 1000.0 * clock() / CLOCKS_PER_SEC;
+}
 
 //全局默认排序设置与默认 Top N
 static SortKey g_key = KEY_FREQ_DESC;   // 默认按频率
 static SortAlg g_alg = ALG_QUICK;       // 默认快速排序
 static int     g_topN = 10;             // 默认Top N
+static int g_use_secondary_tiebreak = 1; // 1=使用二级键(现在的行为), 0=纯主键，制造ties观察稳定性
+
 
 // -------- 函数声明（更新） --------
 void loadTextFile(int fileNumber);
@@ -61,16 +92,12 @@ bool isCSVFile(const char* filename);
 void processCSVFile(FILE* f, char (*targetWords)[50], int* targetWordCount);
 bool isFileCorrupted(const char* filePath, const char* fileContent, size_t contentSize); // New: File corruption detection
 void displayFileRecoveryTips(const char* problemType);
-typedef struct {
-    char word[50];
-    int  count;
-} Pair;
-
 static int  build_pairs_from_tokens(char (*words)[50], int wordCount, Pair out[], int maxOut);
 static void sort_pairs(Pair a[], int n, SortKey key, SortAlg alg);
 static int  load_toxicwords(void);
 static int  is_toxic_word(const char* w);
 void        menu_sort_and_report(void);   // 你在 main 里调用了它，提前声明
+static void merge_sort_pairs(Pair a[], int l, int r, SortKey key);
 
 
 // ====== 新增：高级文本分析函数声明 ======
@@ -1063,15 +1090,22 @@ void compare_algorithms_topN(int topN) {
     memcpy(b, base, sizeof(Pair) * n);
     memcpy(c, base, sizeof(Pair) * n);
 
-    // 同一排序键，比较算法输出
-    SortKey key = g_key; // 用当前选择键
-    sort_pairs(a, n, key, ALG_BUBBLE);
-    sort_pairs(b, n, key, ALG_QUICK);
-    sort_pairs(c, n, key, ALG_MERGE);
+    SortKey key = g_key;
+
+    // ⬇️ 每种算法单独统计
+    SortStats sB, sQ, sM;
+
+    stats_reset(); sort_pairs(a, n, key, ALG_BUBBLE); sB = g_stats;
+    stats_reset(); sort_pairs(b, n, key, ALG_QUICK); sQ = g_stats;
+    stats_reset(); sort_pairs(c, n, key, ALG_MERGE); sM = g_stats;
 
     if (topN > n) topN = n;
-    printf("\n== Algorithm Comparison (key=%s) ==\n", key == KEY_FREQ_DESC ? "freq desc" : "A→Z");
 
+    printf("\n== Algorithm Comparison (key=%s, tiebreak=%s) ==\n",
+        key == KEY_FREQ_DESC ? "freq desc" : "A→Z",
+        g_use_secondary_tiebreak ? "ON" : "OFF");
+
+    // 结果 TopN（可见“稳定/不稳定”导致顺序差异）
     printf("-- Bubble --\n");
     for (int i = 0; i < topN; i++) printf("%2d. %-20s %d\n", i + 1, a[i].word, a[i].count);
 
@@ -1081,13 +1115,20 @@ void compare_algorithms_topN(int topN) {
     printf("-- Merge  --\n");
     for (int i = 0; i < topN; i++) printf("%2d. %-20s %d\n", i + 1, c[i].word, c[i].count);
 
-    // 可选：检测前三十是否完全一致
-    int agree = 1;
-    int cap = topN < 30 ? topN : 30;
+    // 稳定性一致性检查
+    int agree = 1, cap = topN < 30 ? topN : 30;
     for (int i = 0; i < cap; i++) {
         if (strcmp(a[i].word, b[i].word) != 0 || strcmp(a[i].word, c[i].word) != 0) { agree = 0; break; }
     }
-    printf("[i] Top %d %s across algorithms.\n", cap, agree ? "are identical" : "DIFFER (tie-breaking/stability)");
+
+    // ⬇️ 打印“性能对比表”
+    printf("\n[Stability] Top %d %s across algorithms.\n", cap, agree ? "ARE IDENTICAL" : "DIFFER");
+    printf("\n%-8s | %10s | %12s | %12s\n", "Alg", "Time(ms)", "Comparisons", "Moves");
+    printf("----------+------------+--------------+--------------\n");
+    printf("%-8s | %10.3f | %12lld | %12lld\n", "Bubble", sB.ms, sB.comps, sB.moves);
+    printf("%-8s | %10.3f | %12lld | %12lld\n", "Quick", sQ.ms, sQ.comps, sQ.moves);
+    printf("%-8s | %10.3f | %12lld | %12lld\n", "Merge", sM.ms, sM.comps, sM.moves);
+
     free(base); free(a); free(b); free(c);
 }
 
@@ -1200,12 +1241,14 @@ void menu_sort_and_report(void) {
             g_key == KEY_FREQ_DESC ? "Frequency desc (ties→alpha)" : "Alphabetical (A→Z)");
         printf("2) Set sort ALGORITHM (current: %s)\n",
             g_alg == ALG_BUBBLE ? "Bubble" : (g_alg == ALG_QUICK ? "Quick" : "Merge"));
-        printf("3) Set Top N (current: %d)\n", g_topN);
-        printf("4) Show Top N (ALL words)\n");           // Pass: Top N 高频词
-        printf("5) Show Top N (TOXIC words only)\n");    // Merit: 单独Top N毒词
-        printf("6) Compare algorithms (Top N)\n");       // Distinction: 多算法比较
-        printf("7) Extra summary (toxic ratio)\n");      // Distinction: 额外统计
-        printf("8) List ALL words alphabetically\n");    // Pass: 按字母排序展示（可选）
+        printf("3) Toggle secondary tiebreak (current: %s)\n",
+            g_use_secondary_tiebreak ? "ON (alpha as tiebreak)" : "OFF (pure primary key)");
+        printf("4) Set Top N (current: %d)\n", g_topN);
+        printf("5) Show Top N (ALL words)\n");           // Pass: Top N 高频词
+        printf("6) Show Top N (TOXIC words only)\n");    // Merit: 单独Top N毒词
+        printf("7) Compare algorithms (Top N)\n");       // Distinction: 多算法比较
+        printf("8) Extra summary (toxic ratio)\n");      // Distinction: 额外统计
+        printf("9) List ALL words alphabetically\n");    // Pass: 按字母排序展示（可选）
         printf("0) Back\n");
         printf("Select: ");
 
@@ -1233,27 +1276,32 @@ void menu_sort_and_report(void) {
                 else g_alg = ALG_QUICK;
             }
         } break;
-        case 3: {
+        case 3: 
+            g_use_secondary_tiebreak = !g_use_secondary_tiebreak;
+            printf("Secondary tiebreak is now %s\n",
+                g_use_secondary_tiebreak ? "ON" : "OFF");
+            break;
+        case 4: {
             //设置 Top N
             int n;
             printf("Enter Top N (>=1): ");
             if (scanf("%d", &n) == 1 && n > 0) g_topN = n;
         } break;
-        case 4:
+        case 5:
             //显示 Top N（全词）
             sort_and_show_topN_all(g_key, g_alg, g_topN);
             break;
-        case 5:
+        case 6:
             // 毒词通常只看频率高→低；若你要支持字母序也可传 g_key
             sort_and_show_topN_toxic(g_alg, g_topN);
             break;
-        case 6:
+        case 7:
             compare_algorithms_topN(g_topN);
             break;
-        case 7:
+        case 8:
             show_extra_summary();
             break;
-        case 8:
+        case 9:
             list_alpha_all();
             break;
         case 0:
@@ -1264,26 +1312,39 @@ void menu_sort_and_report(void) {
     } while (sub != 0);
 }
 
-// 比较器：返回 <0 表示 a 应排在 b 前
-static int cmp_pairs(const Pair* a, const Pair* b, SortKey key) {
+// 只比较“主键”
+static int cmp_primary(const Pair* a, const Pair* b, SortKey key) {
     if (key == KEY_FREQ_DESC) {
-        if (a->count != b->count) return (b->count - a->count); // 频率高的在前
-        return strcmp(a->word, b->word);                         // 频率相同则字母序
+        if (a->count != b->count) return (b->count - a->count); // 频率降序
+        return 0; // 同频不决定先后
     }
     else { // KEY_ALPHA
         int s = strcmp(a->word, b->word);
-        if (s != 0) return s;                                   // 字母序 A→Z
-        return (b->count - a->count);                            // 同字母时频率高的在前
+        if (s != 0) return s;
+        return 0; // 同字母不决定先后
     }
 }
 
-// --- Bubble Sort（稳定实现即可）---
+// 主比较器：可切换是否使用二级键
+static int cmp_pairs(const Pair* a, const Pair* b, SortKey key) {
+    int c = cmp_primary(a, b, key);
+    if (c != 0 || !g_use_secondary_tiebreak) return c;
+
+    // 二级键（你之前的行为）
+    if (key == KEY_FREQ_DESC) {
+        return strcmp(a->word, b->word);           // 同频时按字母序
+    }
+    else { // KEY_ALPHA
+        return (b->count - a->count);              // 同字母时频率高的在前
+    }
+}
+
 static void bubble_sort_pairs(Pair a[], int n, SortKey key) {
     for (int i = 0; i < n - 1; ++i) {
         int swapped = 0;
         for (int j = 0; j < n - 1 - i; ++j) {
-            if (cmp_pairs(&a[j], &a[j + 1], key) > 0) {
-                Pair t = a[j]; a[j] = a[j + 1]; a[j + 1] = t;
+            if (cmp_with_stats(&a[j], &a[j + 1], key) > 0) {
+                swap_pair(&a[j], &a[j + 1]);
                 swapped = 1;
             }
         }
@@ -1291,16 +1352,15 @@ static void bubble_sort_pairs(Pair a[], int n, SortKey key) {
     }
 }
 
-// --- Quick Sort ---
 static int partition_pairs(Pair a[], int l, int r, SortKey key) {
-    Pair pivot = a[r];
+    Pair pivot = a[r];               g_stats.moves++; // 读到寄存器算一次
     int i = l - 1;
     for (int j = l; j < r; ++j) {
-        if (cmp_pairs(&a[j], &pivot, key) <= 0) {
-            ++i; Pair t = a[i]; a[i] = a[j]; a[j] = t;
+        if (cmp_with_stats(&a[j], &pivot, key) <= 0) {
+            ++i; swap_pair(&a[i], &a[j]);
         }
     }
-    Pair t = a[i + 1]; a[i + 1] = a[r]; a[r] = t;
+    swap_pair(&a[i + 1], &a[r]);
     return i + 1;
 }
 static void quick_sort_pairs(Pair a[], int l, int r, SortKey key) {
@@ -1310,40 +1370,43 @@ static void quick_sort_pairs(Pair a[], int l, int r, SortKey key) {
     quick_sort_pairs(a, p + 1, r, key);
 }
 
-// --- Merge Sort ---
+// merge 里统计写入
 static void merge_pairs(Pair a[], int l, int m, int r, SortKey key) {
     int n1 = m - l + 1, n2 = r - m;
     Pair* L = (Pair*)malloc(sizeof(Pair) * n1);
     Pair* R = (Pair*)malloc(sizeof(Pair) * n2);
-    for (int i = 0; i < n1; ++i) L[i] = a[l + i];
-    for (int j = 0; j < n2; ++j) R[j] = a[m + 1 + j];
+    for (int i = 0; i < n1; ++i) { L[i] = a[l + i]; g_stats.moves++; }
+    for (int j = 0; j < n2; ++j) { R[j] = a[m + 1 + j]; g_stats.moves++; }
 
     int i = 0, j = 0, k = l;
     while (i < n1 && j < n2) {
-        if (cmp_pairs(&L[i], &R[j], key) <= 0) a[k++] = L[i++];
-        else                                   a[k++] = R[j++];
+        if (cmp_with_stats(&L[i], &R[j], key) <= 0) { a[k++] = L[i++]; g_stats.moves++; }
+        else { a[k++] = R[j++]; g_stats.moves++; }
     }
-    while (i < n1) a[k++] = L[i++];
-    while (j < n2) a[k++] = R[j++];
+    while (i < n1) { a[k++] = L[i++]; g_stats.moves++; }
+    while (j < n2) { a[k++] = R[j++]; g_stats.moves++; }
     free(L); free(R);
 }
+
 static void merge_sort_pairs(Pair a[], int l, int r, SortKey key) {
     if (l >= r) return;
-    int m = l + (r - l) / 2;
+    int m = (l + r) / 2;
     merge_sort_pairs(a, l, m, key);
     merge_sort_pairs(a, m + 1, r, key);
     merge_pairs(a, l, m, r, key);
 }
 
-// 按全局 g_alg 选择算法
+
 static void sort_pairs(Pair a[], int n, SortKey key, SortAlg alg) {
     if (n <= 1) return;
+    double t0 = now_ms();
     switch (alg) {
     case ALG_BUBBLE: bubble_sort_pairs(a, n, key); break;
     case ALG_QUICK:  quick_sort_pairs(a, 0, n - 1, key); break;
     case ALG_MERGE:  merge_sort_pairs(a, 0, n - 1, key); break;
     default:         quick_sort_pairs(a, 0, n - 1, key); break;
     }
+    g_stats.ms += (now_ms() - t0);
 }
 
 // ====== Other Functions Remain Unchanged ======
