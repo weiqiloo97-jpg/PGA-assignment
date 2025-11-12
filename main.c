@@ -25,14 +25,6 @@ int  toxicCount = 0;       //留给stage3（还没做）
 bool file1Loaded = false;  // 文件1是否已加载
 bool file2Loaded = false;  // 文件2是否已加载
 
-// ====== 新增：翻译功能全局变量 ======
-#define MAX_TRANSLATED_TEXT 50000
-char translatedText[MAX_TRANSLATED_TEXT];
-char translatedFilePath[256];
-bool translatedFileLoaded = false;
-char translatedWords[30000][50];
-int translatedWordCount = 0;
-
 // ====== 新增：高级文本分析结构 ======
 #define MAX_WORDS 40000
 #define MAX_WORD_LENGTH 50
@@ -109,13 +101,6 @@ static int  is_toxic_word(const char* w);
 void        menu_sort_and_report(void);   // 你在 main 里调用了它，提前声明
 static void merge_sort_pairs(Pair a[], int l, int r, SortKey key);
 
-// ====== 新增：翻译功能声明 ======
-bool detectLanguage(const char* text, char* detectedLang);
-bool translateText(const char* text, char* translated, size_t maxSize, const char* sourceLang);
-void processFileForTranslation(const char* filePath);
-void saveTranslatedTextToFile(const char* originalFilePath);
-void loadTranslatedTextAsFile();
-
 // ====== 新增：高级文本分析函数声明 ======
 int load_stopwords(char stopwords[][MAX_WORD_LENGTH]);
 int is_stopword(char* word, char stopwords[][MAX_WORD_LENGTH], int stop_count);
@@ -191,10 +176,8 @@ static FILE* open_file_read(const char* pathIn) {
 //file corruption detection
 bool isFileCorrupted(const char* filePath, const char* fileContent, size_t contentSize) {
     if (contentSize == 0) {
-        printf("[X] Error: File is completely empty (0 bytes).\n");
-        printf("This file contains no data to analyze.\n");
-        printf("Please select a different file that contains text content.\n");
-        return true;
+        printf("[!] Error : File is empty\n");
+        return false; // Empty file is not considered corrupted, just no content
     }
 
     int totalChars = 0;
@@ -204,29 +187,35 @@ bool isFileCorrupted(const char* filePath, const char* fileContent, size_t conte
     int maxConsecutiveNonsense = 0;
     int wordLikeSequences = 0;
 
+    // Analyze file content characteristics
     for (size_t i = 0; i < contentSize; i++) {
         unsigned char c = (unsigned char)fileContent[i];
         totalChars++;
 
+        // Printable characters (including spaces, punctuation)
         if (isprint(c) || c == '\t' || c == '\n' || c == '\r') {
             printableChars++;
             consecutiveNonsense = 0;
 
+            // Detect word-like sequences (letter sequences)
             if (isalpha(c)) {
+                // Check if this is the start of a word
                 if (i == 0 || !isalpha((unsigned char)fileContent[i - 1])) {
+                    // Check the length of this letter sequence
                     size_t j = i;
                     int wordLen = 0;
                     while (j < contentSize && isalpha((unsigned char)fileContent[j])) {
                         wordLen++;
                         j++;
                     }
-                    if (wordLen >= 2 && wordLen <= 20) {
+                    if (wordLen >= 2 && wordLen <= 20) { // Reasonable word length
                         wordLikeSequences++;
                     }
                 }
             }
         }
         else {
+            // Control characters or non-printable characters
             controlChars++;
             consecutiveNonsense++;
             if (consecutiveNonsense > maxConsecutiveNonsense) {
@@ -235,29 +224,30 @@ bool isFileCorrupted(const char* filePath, const char* fileContent, size_t conte
         }
     }
 
+    // Calculate various ratios
     double printableRatio = (double)printableChars / totalChars;
     double controlCharRatio = (double)controlChars / totalChars;
-    double wordDensity = (double)wordLikeSequences / (contentSize / 100.0);
+    double wordDensity = (double)wordLikeSequences / (contentSize / 100.0); // Words per 100 characters
 
-    printf("[i] File analysis: %zu chars, %.1f%% printable, %.1f%% control, word density: %.1f/100chars\n", 
-           contentSize, printableRatio * 100, controlCharRatio * 100, wordDensity);
+    printf("[i] File analysis: %zu chars, %.1f%% printable, %.1f%% control, word density: %.1f/100chars\n", contentSize, printableRatio * 100, controlCharRatio * 100, wordDensity);
 
+    // Corrupted file detection rules
     bool likelyCorrupted = false;
     const char* reason = NULL;
 
-    if (printableRatio < 0.60) {
+    if (printableRatio < 0.60) { //less than 60% printable characters
         likelyCorrupted = true;
         reason = "low percentage of printable characters";
     }
-    else if (controlCharRatio > 0.40) {
+    else if (controlCharRatio > 0.40) { //more than 40% control characters
         likelyCorrupted = true;
         reason = "high percentage of control characters";
     }
-    else if (maxConsecutiveNonsense > 10) {
+    else if (maxConsecutiveNonsense > 10) { //more than 10 consecutive nonsense characters
         likelyCorrupted = true;
         reason = "long sequences of nonsense characters";
     }
-    else if (wordDensity < 0.5 && contentSize > 100) {
+    else if (wordDensity < 0.5 && contentSize > 100) { //extremely low word density in large files
         likelyCorrupted = true;
         reason = "extremely low word density";
     }
@@ -265,10 +255,10 @@ bool isFileCorrupted(const char* filePath, const char* fileContent, size_t conte
     if (likelyCorrupted) {
         printf("[X] Error: File you loaded seems to be corrupted. Reason: %s\n", reason);
         printf("[X] The file may contain nonsense characters.\n");
-        return true;
+        return true; //stop loading if file is corrupted
     }
 
-    return false;
+    return false; //file is normal 
 }
 
 // ====== 主程序（更新了选项1的处理）======
@@ -307,7 +297,7 @@ int main() {
 
         case 3:
         {
-            if (!file1Loaded && !file2Loaded &&!translatedFileLoaded) {
+            if (!file1Loaded && !file2Loaded) {
                 printf("[!] No text files loaded. Use menu 1 first.\n");
                 break;
             }
@@ -376,17 +366,6 @@ void loadTextFile(int fileNumber) {
     int* targetWordCount = (fileNumber == 1) ? &wordCount1 : &wordCount2;
     bool* targetFileLoaded = (fileNumber == 1) ? &file1Loaded : &file2Loaded;
 
-    // ====== NEW: Check for empty file path ======
-    if (filePath[0] == '\0') {
-        printf("[X] Error: File path cannot be empty. Please enter a valid file path.\n");
-        printf("Recovery instructions:\n");
-        printf("1. Enter a valid file name (e.g., 'data.txt' or 'input.csv')\n");
-        printf("2. Use quotes if path contains spaces: \"my file.txt\"\n");
-        printf("3. File must exist in the specified location\n");
-        *targetFileLoaded = false;
-        return;
-    }
-
     FILE* f = open_file_read(filePath);
     if (!f) {
         printf("[!] Error: Cannot open file '%s'\n", filePath);
@@ -401,22 +380,6 @@ void loadTextFile(int fileNumber) {
         return;
     }
 
-    // ====== NEW: Enhanced empty file detection ======
-    fseek(f, 0, SEEK_END);
-    long fileSize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    if (fileSize == 0) {
-        printf("[X] Error: File '%s' is completely empty (0 bytes).\n", filePath);
-        printf("Recovery instructions:\n");
-        printf("1. Check if this is the correct file\n");
-        printf("2. The file should contain text content to analyze\n");
-        printf("3. Try selecting a different file with actual content\n");
-        fclose(f);
-        *targetFileLoaded = false;
-        return;
-    }
-
     *targetWordCount = 0;
 
     // Remove quotes for file type detection
@@ -425,69 +388,34 @@ void loadTextFile(int fileNumber) {
     cleanPath[sizeof(cleanPath) - 1] = '\0';
     strip_quotes(cleanPath);
 
-    // ====== File content pre-scan and corruption detection ======
+    // ====== New: File content pre-scan and corruption detection ======
     printf("[i] Pre-scanning file for corruption detection...\n");
 
-    // Read file content for language detection
-    char* fileContent = NULL;
-    bool shouldCheckLanguage = true;
-    
+    // Read entire file content for detection
+    fseek(f, 0, SEEK_END);
+    long fileSize = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
     if (fileSize > 0) {
-        fileContent = (char*)malloc(fileSize + 1);
+        char* fileContent = (char*)malloc(fileSize + 1);
         if (fileContent) {
             size_t bytesRead = fread(fileContent, 1, fileSize, f);
             fileContent[bytesRead] = '\0';
 
-            // Detect if file is corrupted (includes empty file check)
+            // Detect if file is corrupted
             if (isFileCorrupted(cleanPath, fileContent, bytesRead)) {
                 free(fileContent);
                 fclose(f);
                 *targetFileLoaded = false;
                 return; // Stop loading corrupted file
             }
+
+            free(fileContent);
         }
         // Reset file pointer to beginning
         fseek(f, 0, SEEK_SET);
     }
 
-    // ====== NEW: Language Detection ======
-    if (fileContent && shouldCheckLanguage) {
-        printf("[i] Checking file language...\n");
-        
-        // Sample first 2000 characters for language detection
-        char sampleText[2001];
-        strncpy(sampleText, fileContent, 2000);
-        sampleText[2000] = '\0';
-        
-        char detectedLang[10];
-        detectLanguage(sampleText, detectedLang);
-        
-        if (strcmp(detectedLang, "fr") == 0 || 
-            strcmp(detectedLang, "es") == 0 || 
-            strcmp(detectedLang, "ms") == 0) {
-            
-            printf("\n[X] ERROR: File contains non-English text (%s language detected)\n",
-                   strcmp(detectedLang, "fr") == 0 ? "French" :
-                   strcmp(detectedLang, "es") == 0 ? "Spanish" :
-                   strcmp(detectedLang, "ms") == 0 ? "Malay" : "Unknown");
-            
-            printf("RECOVERY INSTRUCTIONS:\n");
-            printf("1. This file contains text in a foreign language\n");
-            printf("2. Please use Menu Option 7 first to translate the file to English\n");
-            printf("3. After translation, you can analyze the translated text\n");
-            printf("4. Translation supports: French, Spanish, and Malay languages\n");
-            printf("5. The translation will create an English version for analysis\n\n");
-            
-            free(fileContent);
-            fclose(f);
-            *targetFileLoaded = false;
-            return;
-        } else {
-            printf("[✓] File language: English (safe to analyze)\n");
-        }
-    }
-
-    // Rest of your existing file processing code...
     // Check file type and process accordingly
     if (isCSVFile(cleanPath)) {
         printf("[i] Detected CSV file format - now converting columns to text...\n");
@@ -521,17 +449,8 @@ void loadTextFile(int fileNumber) {
     }
 
     fclose(f);
-    if (fileContent) free(fileContent);
-    
-    // ====== NEW: Check if any words were actually loaded ======
-    if (*targetWordCount == 0) {
-        printf("[!] Warning: File loaded but no valid words were found.\n");
-        printf("The file may contain only numbers, symbols, or be improperly formatted.\n");
-        *targetFileLoaded = false;
-    } else {
-        *targetFileLoaded = true;
-        printf("[✓] Successfully loaded %d tokens from File %d.\n", *targetWordCount, fileNumber);
-    }
+    *targetFileLoaded = true;
+    printf("[✓] Loaded %d tokens from File %d.\n", *targetWordCount, fileNumber);
 }
 
 // ====== 新增：高级文本分析函数实现 ======
@@ -888,13 +807,6 @@ void handleFileMenu() {
                 handleError("Failed to read file path");
                 continue;
             }
-            
-            // ====== NEW: Immediate validation ======
-            if (inputFilePath1[0] == '\0') {
-                printf("[X] Error: File path cannot be blank. Please enter a valid file path.\n");
-                continue;
-            }
-            
             loadTextFile(1);
         }
         else if (strcmp(subChoice, "1.2") == 0) {
@@ -903,13 +815,6 @@ void handleFileMenu() {
                 handleError("Failed to read file path");
                 continue;
             }
-            
-            // ====== NEW: Immediate validation ======
-            if (inputFilePath2[0] == '\0') {
-                printf("[X] Error: File path cannot be blank. Please enter a valid file path.\n");
-                continue;
-            }
-            
             loadTextFile(2);
         }
         else if (strcmp(subChoice, "1.3") == 0) {
@@ -928,27 +833,10 @@ void handleFileMenu() {
 }
 
 // ====== 新增：显示文件历史函数（显示CSV到TXT转换） ======
-// ====== 新增：显示文件历史函数（显示CSV到TXT转换） ======
 void showFileHistory(int fileNumber) {
-    char* filePath;
-    int wordCount;
-    bool fileLoaded;
-    char (*words)[50];
-
-    if (fileNumber == 1) {
-        filePath = inputFilePath1;
-        wordCount = wordCount1;
-        fileLoaded = file1Loaded;
-        words = words1;
-    } else if (fileNumber == 2) {
-        filePath = inputFilePath2;
-        wordCount = wordCount2;
-        fileLoaded = file2Loaded;
-        words = words2;
-    } else {
-        printf("Invalid file number.\n");
-        return;
-    }
+    char* filePath = (fileNumber == 1) ? inputFilePath1 : inputFilePath2;
+    int wordCount = (fileNumber == 1) ? wordCount1 : wordCount2;
+    bool fileLoaded = (fileNumber == 1) ? file1Loaded : file2Loaded;
 
     printf("\nFile %d History\n", fileNumber);
     printf("==================\n");
@@ -963,47 +851,39 @@ void showFileHistory(int fileNumber) {
     cleanPath[sizeof(cleanPath) - 1] = '\0';
     strip_quotes(cleanPath);
 
-    // Check if this is a translated file
-    bool isTranslated = (strstr(cleanPath, "_translated.txt") != NULL);
-    
-    if (isTranslated) {
+    // Determine original file type and processed file type
+    bool isCSV = isCSVFile(cleanPath);
+    const char* originalType = isCSV ? "CSV" : "Text";
+    const char* processedType = "Text"; // CSV files are always converted to text format
+
+    // Create converted file path (replace .csv with .txt if it's a CSV file)
+    char convertedPath[256];
+    strncpy(convertedPath, cleanPath, sizeof(convertedPath) - 1);
+    convertedPath[sizeof(convertedPath) - 1] = '\0';
+
+    if (isCSV) {
+        // Replace .csv or .CSV extension with .txt
+        char* dot = strrchr(convertedPath, '.');
+        if (dot != NULL) {
+            strcpy(dot, ".txt");
+        }
+
+        printf("Original file path: %s\n", cleanPath);
+        printf("Converted file path: %s\n", convertedPath);
+        printf("Original file type: %s\n", originalType);
+        printf("Processed as: %s\n", processedType);
+        printf("Note: CSV file converted to text format (columns extracted as words)\n");
+    }
+    else {
+        // For text files, just show the original path
         printf("File path: %s\n", cleanPath);
-        printf("File type: Translated Text\n");
-        printf("Note: This file was generated by translation service\n");
-    } else {
-        // Determine original file type and processed file type
-        bool isCSV = isCSVFile(cleanPath);
-        const char* originalType = isCSV ? "CSV" : "Text";
-        const char* processedType = "Text"; // CSV files are always converted to text format
-
-        // Create converted file path (replace .csv with .txt if it's a CSV file)
-        char convertedPath[256];
-        strncpy(convertedPath, cleanPath, sizeof(convertedPath) - 1);
-        convertedPath[sizeof(convertedPath) - 1] = '\0';
-
-        if (isCSV) {
-            // Replace .csv or .CSV extension with .txt
-            char* dot = strrchr(convertedPath, '.');
-            if (dot != NULL) {
-                strcpy(dot, ".txt");
-            }
-
-            printf("Original file path: %s\n", cleanPath);
-            printf("Converted file path: %s\n", convertedPath);
-            printf("Original file type: %s\n", originalType);
-            printf("Processed as: %s\n", processedType);
-            printf("Note: CSV file converted to text format (columns extracted as words)\n");
-        }
-        else {
-            // For text files, just show the original path
-            printf("File path: %s\n", cleanPath);
-            printf("File type: %s\n", originalType);
-        }
+        printf("File type: %s\n", originalType);
     }
 
     printf("Total words loaded: %d\n", wordCount);
 
     // 显示前10个单词作为样本
+    char (*words)[50] = (fileNumber == 1) ? words1 : words2;
     int sampleCount = (wordCount < 10) ? wordCount : 10;
     printf("Sample words (%d): ", sampleCount);
     for (int i = 0; i < sampleCount; i++) {
@@ -1014,14 +894,13 @@ void showFileHistory(int fileNumber) {
 }
 
 // ====== Updated: Display General Statistics ======
-// ====== Updated: Display General Statistics ======
 void displayGeneralStatistics() {
-    if (!file1Loaded && !file2Loaded && !translatedFileLoaded) {
-        printf("[!] No text files loaded. Use menu 1 or 7 first.\n");
+    if (!file1Loaded && !file2Loaded) {
+        printf("[!] No text files loaded. Use menu 1 first.\n");
         return;
     }
 
-    printf("\nGeneral statistics:\n");
+    printf("General statistics:\n");
     printf("===================\n");
 
     if (file1Loaded) {
@@ -1033,16 +912,7 @@ void displayGeneralStatistics() {
             }
             if (!seen) unique1++;
         }
-        
-        // Check if File 1 contains translated content
-        bool isTranslatedFile1 = (strstr(inputFilePath1, "_translated.txt") != NULL);
-        const char* file1Type = isTranslatedFile1 ? "Translated Text" : 
-                               (isCSVFile(inputFilePath1) ? "CSV" : "Text");
-        
-        printf("File 1 (%s):\n", file1Type);
-        if (isTranslatedFile1) {
-            printf("  Source: Translation Service\n");
-        }
+        printf("File 1 (%s):\n", isCSVFile(inputFilePath1) ? "CSV" : "Text");
         printf("  Total words (tokens): %d\n", wordCount1);
         printf("  Unique words        : %d\n", unique1);
     }
@@ -1060,37 +930,20 @@ void displayGeneralStatistics() {
         printf("  Total words (tokens): %d\n", wordCount2);
         printf("  Unique words        : %d\n", unique2);
     }
-
-    // Show translated file separately if it exists but File 1 is not updated
-    if (translatedFileLoaded && (!file1Loaded || strcmp(inputFilePath1, translatedFilePath) != 0)) {
-        int uniqueTrans = 0;
-        for (int i = 0; i < translatedWordCount; i++) {
-            int seen = 0;
-            for (int j = 0; j < i; j++) {
-                if (strcmp(translatedWords[i], translatedWords[j]) == 0) { seen = 1; break; }
-            }
-            if (!seen) uniqueTrans++;
-        }
-        printf("Translated File:\n");
-        printf("  Source: Translation Service\n");
-        printf("  Total words (tokens): %d\n", translatedWordCount);
-        printf("  Unique words        : %d\n", uniqueTrans);
-        printf("  Source file         : %s\n\n", translatedFilePath);
-    }
 }
-
 // ====== Updated: Sort and Display Top N Words ======
 void sortAndDisplayTopNWords() {
-    if (!file1Loaded && !file2Loaded && !translatedFileLoaded) {
+    if (!file1Loaded && !file2Loaded) {
         printf("[!] No text files loaded. Use menu 1 first.\n");
         return;
     }
+
     int fileChoice;
     printf("Choose file to analyze:\n");
     if (file1Loaded) printf("1 - File 1 (%s)\n", isCSVFile(inputFilePath1) ? "CSV" : "Text");
     if (file2Loaded) printf("2 - File 2 (%s)\n", isCSVFile(inputFilePath2) ? "CSV" : "Text");
-    if (translatedFileLoaded) printf("3 - Translated File (%s)\n", translatedFilePath);
     printf("Enter choice: ");
+
     if (scanf("%d", &fileChoice) != 1) {
         int c; while ((c = getchar()) != '\n' && c != EOF);
         printf("Invalid number.\n");
@@ -1111,11 +964,6 @@ void sortAndDisplayTopNWords() {
         words = words2;
         wordCount = wordCount2;
         filePath = inputFilePath2;
-    }
-    else if (fileChoice == 3 && translatedFileLoaded) {
-        words = translatedWords;
-        wordCount = translatedWordCount;
-        filePath = translatedFilePath;
     }
     else {
         printf("Invalid file choice or file not loaded.\n");
@@ -1391,11 +1239,9 @@ void menu_sort_and_report(void) {
     do {
         printf("\n=== Sorting & Reporting ===\n");
         printf("1) Set source file (current: %s)\n",
-            g_use_file == 1 ? "File 1" : 
-            g_use_file == 2 ? "File 2" : 
-            g_use_file == 3 ? "Translated File" : "Auto(File1->File2->Translated)");
+            g_use_file == 1 ? "File 1" : (g_use_file == 2 ? "File 2" : "Auto(File1->File2)"));
         printf("2) Set sort KEY (current: %s)\n",
-            g_key == KEY_FREQ_DESC ? "Frequency desc (ties->alpha)" : "Alphabetical (A->Z)");
+            g_key == KEY_FREQ_DESC ? "Frequency desc (ties→alpha)" : "Alphabetical (A→Z)");
         printf("3) Set sort ALGORITHM (current: %s)\n",
             g_alg == ALG_BUBBLE ? "Bubble" : (g_alg == ALG_QUICK ? "Quick" : "Merge"));
         printf("4) Toggle secondary tiebreak (current: %s)\n",
@@ -1418,19 +1264,19 @@ void menu_sort_and_report(void) {
 
         switch (sub) {
         case 1: {
-        int s;
-        printf("Choose source: 1=File1  2=File2  3=Translated File  0=Auto: ");
-        if (scanf("%d", &s) == 1 && (s == 0 || s == 1 || s == 2 || s == 3)) {
-            g_use_file = s;
-        }
-        else {
-            printf("Invalid source. Keep current.\n");
-        }
-} break;
+            int s;
+            printf("Choose source: 1=File1  2=File2  0=Auto(File1->File2): ");
+            if (scanf("%d", &s) == 1 && (s == 0 || s == 1 || s == 2)) {
+                g_use_file = s;
+            }
+            else {
+                printf("Invalid source. Keep current.\n");
+            }
+        } break;
         case 2: {
             //设置排序键（频率/字母）
             int k;
-            printf("Choose key: 1=Frequency desc (ties->alpha), 2=Alphabetical : ");
+            printf("Choose key: 1=Frequency desc (ties→alpha), 2=Alphabetical : ");
             if (scanf("%d", &k) == 1) g_key = (k == 2 ? KEY_ALPHA : KEY_FREQ_DESC);
         } break;
         case 3: {
@@ -1579,12 +1425,9 @@ static void sort_pairs(Pair a[], int n, SortKey key, SortAlg alg) {
 static void pick_tokens(char (**out_words)[50], int* out_count) {
     if (g_use_file == 1 && file1Loaded) { *out_words = words1; *out_count = wordCount1; return; }
     if (g_use_file == 2 && file2Loaded) { *out_words = words2; *out_count = wordCount2; return; }
-    // 新增：翻译文件支持
-    if (g_use_file == 3 && translatedFileLoaded) { *out_words = translatedWords; *out_count = translatedWordCount; return; }
     // Auto 模式：沿用你现在的优先级
     if (file1Loaded) { *out_words = words1; *out_count = wordCount1; return; }
     if (file2Loaded) { *out_words = words2; *out_count = wordCount2; return; }
-    if (translatedFileLoaded) { *out_words = translatedWords; *out_count = translatedWordCount; return; }
     *out_words = NULL; *out_count = 0;
 }
 
@@ -1599,7 +1442,7 @@ void displayToxicWordAnalysis() {
 }
 
 void saveResultsToFile() {
-    if (!file1Loaded && !file2Loaded &&!translatedFileLoaded) {
+    if (!file1Loaded && !file2Loaded) {
         printf("[!] No text loaded. Use menu 1 first.\n");
         return;
     }
@@ -1674,421 +1517,13 @@ void handleError(const char* message) {
     printf("Error: %s\n", message);
 }
 
-// ====== 翻译功能实现 ======
-
-// 检测文本语言
-bool detectLanguage(const char* text, char* detectedLang) {
-    // 简单的关键词检测
-    char lowerText[1000];
-    strncpy(lowerText, text, sizeof(lowerText) - 1);
-    lowerText[sizeof(lowerText) - 1] = '\0';
-    
-    // 转换为小写以便检测
-    for (int i = 0; lowerText[i]; i++) {
-        lowerText[i] = tolower(lowerText[i]);
-    }
-    
-    // 检测法语关键词
-    if (strstr(lowerText, " le ") || strstr(lowerText, " la ") || 
-        strstr(lowerText, " je ") || strstr(lowerText, " tu ") ||
-        strstr(lowerText, " et ") || strstr(lowerText, " de ") ||
-        strstr(lowerText, " des ") || strstr(lowerText, " du ")) {
-        strcpy(detectedLang, "fr");
-        return true;
-    }
-    
-    // 检测西班牙语关键词
-    if (strstr(lowerText, " el ") || strstr(lowerText, " la ") || 
-        strstr(lowerText, " y ") || strstr(lowerText, " de ") ||
-        strstr(lowerText, " que ") || strstr(lowerText, " en ") ||
-        strstr(lowerText, " por ") || strstr(lowerText, " con ")) {
-        strcpy(detectedLang, "es");
-        return true;
-    }
-    
-    // 检测马来语关键词
-    if (strstr(lowerText, " dan ") || strstr(lowerText, " yang ") || 
-        strstr(lowerText, " di ") || strstr(lowerText, " ke ") ||
-        strstr(lowerText, " dari ") || strstr(lowerText, " ini ") ||
-        strstr(lowerText, " itu ") || strstr(lowerText, " dengan ")) {
-        strcpy(detectedLang, "ms");
-        return true;
-    }
-    
-    // 默认为英语
-    strcpy(detectedLang, "en");
-    return true;
-}
-
-bool translateText(const char* text, char* translated, size_t maxSize, const char* sourceLang) {
-    printf("[i] Translating from %s to English...\n", 
-           strcmp(sourceLang, "fr") == 0 ? "French" :
-           strcmp(sourceLang, "es") == 0 ? "Spanish" :
-           strcmp(sourceLang, "ms") == 0 ? "Bahasa Malaysia" : "Unknown");
-    
-    // 模拟翻译 - 简单的关键词替换
-    char temp[1000];
-    strncpy(temp, text, sizeof(temp) - 1);
-    temp[sizeof(temp) - 1] = '\0';
-    
-    // 转换为小写处理
-    for (int i = 0; temp[i]; i++) {
-        temp[i] = tolower(temp[i]);
-    }
-    
-    // 法语到英语的简单替换
-    if (strcmp(sourceLang, "fr") == 0) {
-        char* pos;
-        while ((pos = strstr(temp, "merde")) != NULL) {
-            memcpy(pos, "shit  ", 6);
-        }
-        while ((pos = strstr(temp, "stupide")) != NULL) {
-            memcpy(pos, "stupid ", 7);
-        }
-        while ((pos = strstr(temp, "idiot")) != NULL) {
-            memcpy(pos, "idiot ", 6);
-        }
-        while ((pos = strstr(temp, "débile")) != NULL) {
-            memcpy(pos, "moron ", 6);
-        }
-    }
-    // 西班牙语到英语的简单替换
-    else if (strcmp(sourceLang, "es") == 0) {
-        char* pos;
-        while ((pos = strstr(temp, "estúpido")) != NULL) {
-            memcpy(pos, "stupid ", 8);
-        }
-        while ((pos = strstr(temp, "idiota")) != NULL) {
-            memcpy(pos, "idiot ", 6);
-        }
-        while ((pos = strstr(temp, "tonto")) != NULL) {
-            memcpy(pos, "fool  ", 6);
-        }
-    }
-    // 马来语到英语的简单替换
-    else if (strcmp(sourceLang, "ms") == 0) {
-        char* pos;
-        while ((pos = strstr(temp, "bodoh")) != NULL) {
-            memcpy(pos, "stupid", 6);
-        }
-        while ((pos = strstr(temp, "babi")) != NULL) {
-            memcpy(pos, "pig   ", 5);
-        }
-        while ((pos = strstr(temp, "sial")) != NULL) {
-            memcpy(pos, "damn  ", 5);
-        }
-    }
-    
-    strncpy(translated, temp, maxSize - 1);
-    translated[maxSize - 1] = '\0';
-    
-    // 添加翻译标记
-    char final[1000];
-    snprintf(final, sizeof(final), "[TRANSLATED FROM %s] %s", 
-             strcmp(sourceLang, "fr") == 0 ? "FRENCH" :
-             strcmp(sourceLang, "es") == 0 ? "SPANISH" :
-             strcmp(sourceLang, "ms") == 0 ? "MALAY" : "UNKNOWN", 
-             translated);
-    
-    strncpy(translated, final, maxSize - 1);
-    translated[maxSize - 1] = '\0';
-    
-    return true;
-}
-
-// 处理文件进行翻译
-void processFileForTranslation(const char* filePath) {
-    FILE* f = open_file_read(filePath);
-    if (!f) {
-        printf("[!] Error: Cannot open file for translation: %s\n", filePath);
-        return;
-    }
-    
-    // 检查文件是否为空
-    fseek(f, 0, SEEK_END);
-    long fileSize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    
-    if (fileSize == 0) {
-        printf("[X] Error: File is empty. Cannot translate.\n");
-        fclose(f);
-        return;
-    }
-    
-    // 读取文件内容进行损坏检测
-    char* fileContent = (char*)malloc(fileSize + 1);
-    if (!fileContent) {
-        printf("[!] Error: Memory allocation failed\n");
-        fclose(f);
-        return;
-    }
-    
-    size_t bytesRead = fread(fileContent, 1, fileSize, f);
-    fileContent[bytesRead] = '\0';
-    
-    // 检查文件是否损坏
-    if (isFileCorrupted(filePath, fileContent, bytesRead)) {
-        printf("[X] Error: File appears to be corrupted. Cannot translate.\n");
-        free(fileContent);
-        fclose(f);
-        return;
-    }
-    
-    fseek(f, 0, SEEK_SET);
-    
-    printf("[!] Processing file for translation...\n");
-    
-    // 清空之前的翻译文本
-    translatedText[0] = '\0';
-    char line[4096];
-    int totalLines = 0;
-    int translatedLines = 0;
-    
-    // 处理CSV文件
-    if (isCSVFile(filePath)) {
-        printf("[i] Detected CSV file - translating columns...\n");
-        while (fgets(line, sizeof(line), f) && strlen(translatedText) < MAX_TRANSLATED_TEXT - 1000) {
-            totalLines++;
-            
-            char lineCopy[4096];
-            strncpy(lineCopy, line, sizeof(lineCopy) - 1);
-            lineCopy[sizeof(lineCopy) - 1] = '\0';
-            
-            // 移除换行符
-            lineCopy[strcspn(lineCopy, "\n\r")] = '\0';
-            
-            // CSV解析：简单的逗号分割
-            char* columns[100];
-            int columnCount = 0;
-            char* token = strtok(lineCopy, ",");
-            
-            while (token != NULL && columnCount < 100) {
-                columns[columnCount++] = token;
-                token = strtok(NULL, ",");
-            }
-            
-            // 处理每一列
-            char translatedLine[4096] = "";
-            for (int i = 0; i < columnCount; i++) {
-                char detectedLang[10];
-                char translatedColumn[1000];
-                
-                // 检测语言并翻译
-                if (detectLanguage(columns[i], detectedLang) && 
-                    strcmp(detectedLang, "en") != 0) {
-                    translateText(columns[i], translatedColumn, sizeof(translatedColumn), detectedLang);
-                    translatedLines++;
-                } else {
-                    strncpy(translatedColumn, columns[i], sizeof(translatedColumn) - 1);
-                    translatedColumn[sizeof(translatedColumn) - 1] = '\0';
-                }
-                
-                // 构建翻译后的行
-                if (i > 0) strcat(translatedLine, ",");
-                strcat(translatedLine, translatedColumn);
-            }
-            
-            // 添加到翻译文本
-            strcat(translatedText, translatedLine);
-            strcat(translatedText, "\n");
-        }
-    } else {
-        // 处理文本文件
-        printf("[i] Detected text file - translating lines...\n");
-        while (fgets(line, sizeof(line), f) && strlen(translatedText) < MAX_TRANSLATED_TEXT - 1000) {
-            totalLines++;
-            
-            char lineCopy[4096];
-            strncpy(lineCopy, line, sizeof(lineCopy) - 1);
-            lineCopy[sizeof(lineCopy) - 1] = '\0';
-            
-            // 移除换行符
-            lineCopy[strcspn(lineCopy, "\n\r")] = '\0';
-            
-            char detectedLang[10];
-            char translatedLine[1000];
-            
-            // 检测语言并翻译
-            if (detectLanguage(lineCopy, detectedLang) && 
-                strcmp(detectedLang, "en") != 0) {
-                translateText(lineCopy, translatedLine, sizeof(translatedLine), detectedLang);
-                translatedLines++;
-            } else {
-                strncpy(translatedLine, lineCopy, sizeof(translatedLine) - 1);
-                translatedLine[sizeof(translatedLine) - 1] = '\0';
-            }
-            
-            // 添加到翻译文本
-            strcat(translatedText, translatedLine);
-            strcat(translatedText, "\n");
-        }
-    }
-    
-    fclose(f);
-    free(fileContent);
-    
-    printf("\n[!] Translation summary:\n");
-    printf("- Total lines processed: %d\n", totalLines);
-    printf("- Lines translated: %d\n", translatedLines);
-    printf("- Translation saved to memory (%zu characters)\n", strlen(translatedText));
-}
-
-// 保存翻译文本到文件
-// 保存翻译文本到文件
-void saveTranslatedTextToFile(const char* originalFilePath) {
-    char cleanPath[256];
-    strncpy(cleanPath, originalFilePath, sizeof(cleanPath) - 1);
-    cleanPath[sizeof(cleanPath) - 1] = '\0';
-    strip_quotes(cleanPath);
-    
-    char baseName[256];
-    const char* lastSlash = strrchr(cleanPath, '/');
-    if (!lastSlash) lastSlash = strrchr(cleanPath, '\\');
-    
-    if (lastSlash) {
-        strcpy(baseName, lastSlash + 1);
-    } else {
-        strcpy(baseName, cleanPath);
-    }
-    
-    char* dot = strrchr(baseName, '.');
-    if (dot) *dot = '\0';
-    
-    // Create the translated file name
-    snprintf(translatedFilePath, sizeof(translatedFilePath), 
-             "%s_translated.txt", baseName);
-    
-#ifdef _WIN32
-    FILE* f = fopen_u8(translatedFilePath, "w");
-#else
-    FILE* f = fopen(translatedFilePath, "w");
-#endif
-    
-    if (!f) {
-        printf("[!] Error: Cannot create translation output file\n");
-        return;
-    }
-    
-    fputs(translatedText, f);
-    fclose(f);
-    
-    // ====== NEW: Create clickable file path for VS Code ======
-    printf("\n[!] File processing options for Translated File:\n");
-    
-    char absolutePath[512];
-    
-    // Try to get absolute path
-#ifdef _WIN32
-    if (_fullpath(absolutePath, translatedFilePath, sizeof(absolutePath))) {
-        // Convert backslashes to forward slashes for file:// URL
-        for (char* p = absolutePath; *p; p++) {
-            if (*p == '\\') *p = '/';
-        }
-        printf("TRANSLATED FILE: file:///%s\n", absolutePath);
-    } else {
-        printf("TRANSLATED FILE: %s\n", translatedFilePath);
-    }
-#else
-    if (realpath(translatedFilePath, absolutePath)) {
-        printf("TRANSLATED FILE: file://%s\n", absolutePath);
-    } else {
-        printf("TRANSLATED FILE: %s\n", translatedFilePath);
-    }
-#endif
-    
-    printf("File saved as: %s\n", translatedFilePath);
-    printf("In VS Code: Ctrl+Click the file:// link above to open the file\n");
-    printf("You can now use Menu Options 2-6 to analyse the translated text\n");
-}
-
-void loadTranslatedTextAsFile() {
-    translatedWordCount = 0;
-    
-    char textCopy[MAX_TRANSLATED_TEXT];
-    strncpy(textCopy, translatedText, sizeof(textCopy) - 1);
-    textCopy[sizeof(textCopy) - 1] = '\0';
-    
-    char* line = strtok(textCopy, "\n");
-    while (line != NULL && translatedWordCount < 30000) {
-        char lineCopy[4096];
-        strncpy(lineCopy, line, sizeof(lineCopy) - 1);
-        lineCopy[sizeof(lineCopy) - 1] = '\0';
-        
-        normalize_line(lineCopy);
-        
-        char* word = strtok(lineCopy, " \t\r\n");
-        while (word != NULL && translatedWordCount < 30000) {
-            size_t wordLen = strlen(word);
-            if (wordLen > 0 && wordLen < 50) {
-                strcpy(translatedWords[translatedWordCount], word);
-                translatedWordCount++;
-            }
-            word = strtok(NULL, " \t\r\n");
-        }
-        
-        line = strtok(NULL, "\n");
-    }
-    
-    translatedFileLoaded = true;
-    
-    // ====== NEW: Also update File 1 with translated content ======
-    wordCount1 = translatedWordCount;
-    for (int i = 0; i < translatedWordCount && i < 30000; i++) {
-        strcpy(words1[i], translatedWords[i]);
-    }
-    file1Loaded = true;
-    strcpy(inputFilePath1, translatedFilePath);
-    
-    printf("[✓] Translated text loaded for analysis (%d words)\n", translatedWordCount);
-    printf("[✓] File 1 updated with translated content - use Option 1.3 to view file history\n");
-}
-
 void translateTextToEnglish() {
-    printf("\n=== Text Translation Feature ===\n");
-    printf("This feature translates toxic comments from these languages to English for analysis.\n");
-    printf("1. French (fr)\n2. Spanish (es)\n3. Bahasa Malaysia (ms)\n\n");
-    
-    char filePath[256];
-    printf("Enter the file path to translate (supports .txt and .csv):\n> ");
-    if (!read_line(filePath, sizeof(filePath))) {
-        handleError("Failed to read file path");
-        return;
+    char sentence[256];
+    printf("Enter a non-English sentence to translate: ");
+    if (!read_line(sentence, sizeof(sentence))) {
+        printf("Failed to read sentence.\n"); return;
     }
-    
-    // Check if path is empty
-    if (filePath[0] == '\0') {
-        printf("[X] Error: File path cannot be empty.\n\n");
-        printf("Recovery instructions:\n");
-        printf("1. Enter a valid file path\n");
-        printf("2. Use quotes if path contains spaces: \"my file.txt\"\n");
-        printf("3. File must exist in the specified location\n");
-        return;
-    }
-    
-    // Process file for translation
-    processFileForTranslation(filePath);
-    
-    if (strlen(translatedText) == 0) {
-        printf("[!] No text was translated. The file may be empty or in an unsupported format.\n");
-        return;
-    }
-    
-    // Save translated text to file
-    saveTranslatedTextToFile(filePath);
-    
-    // Load translated text as analyzable file
-    loadTranslatedTextAsFile();
-    
-    // ====== NEW: Enhanced completion message ======
-    printf("\nTRANSLATION PROCESS COMPLETED SUCCESSFULLY!\n");
-    printf("===============================================\n");
-    printf("You can now analyse the translated text using:\n");
-    printf("1.3 - View File 1 history (shows translated content)\n");
-    printf("2    - General Statistics\n");
-    printf("3    - Toxic Word Analysis\n");
-    printf("4    - Sort and Display Top N Words\n");
-    printf("6    - Advanced Text Analysis\n");
-    printf("===============================================\n");
+    printf("Translating...\nTranslated text: %s\n", sentence);
 }
 
 void displayNegativityScale() {
