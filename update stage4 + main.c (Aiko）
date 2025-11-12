@@ -49,6 +49,8 @@ typedef struct {
     double    ms;      // 排序耗时(ms)
 } SortStats;
 
+static int cmp_pairs(const Pair* a, const Pair* b, SortKey key);
+static void pick_tokens(char (**out_words)[50], int* out_count);
 static SortStats g_stats;
 
 static void stats_reset(void) { g_stats.comps = 0; g_stats.moves = 0; g_stats.ms = 0.0; }
@@ -73,7 +75,7 @@ static SortKey g_key = KEY_FREQ_DESC;   // 默认按频率
 static SortAlg g_alg = ALG_QUICK;       // 默认快速排序
 static int     g_topN = 10;             // 默认Top N
 static int g_use_secondary_tiebreak = 1; // 1=使用二级键(现在的行为), 0=纯主键，制造ties观察稳定性
-
+static int g_use_file = 1; // 1=File1, 2=File2, 0=auto(现状)
 
 // -------- 函数声明（更新） --------
 void loadTextFile(int fileNumber);
@@ -98,7 +100,6 @@ static int  load_toxicwords(void);
 static int  is_toxic_word(const char* w);
 void        menu_sort_and_report(void);   // 你在 main 里调用了它，提前声明
 static void merge_sort_pairs(Pair a[], int l, int r, SortKey key);
-
 
 // ====== 新增：高级文本分析函数声明 ======
 int load_stopwords(char stopwords[][MAX_WORD_LENGTH]);
@@ -1019,9 +1020,9 @@ void sortAndDisplayTopNWords() {
 void sort_and_show_topN_all(SortKey key, SortAlg alg, int topN) {
     if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
 
-    // 选用“当前已加载”的一个文件（优先 File1）
-    char (*w)[50] = file1Loaded ? words1 : words2;
-    int wc = file1Loaded ? wordCount1 : wordCount2;
+    char (*w)[50]; int wc; pick_tokens(&w, &wc);
+    if (!w || wc == 0) { printf("[!] No text loaded.\n"); return; }
+
 
     Pair* arr = (Pair*)malloc(sizeof(Pair) * 6000);
     if (!arr) { printf("[!] OOM\n"); return; }
@@ -1044,8 +1045,8 @@ void sort_and_show_topN_toxic(SortAlg alg, int topN) {
     if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
     load_toxicwords();
 
-    char (*w)[50] = file1Loaded ? words1 : words2;
-    int wc = file1Loaded ? wordCount1 : wordCount2;
+    char (*w)[50]; int wc; pick_tokens(&w, &wc);
+    if (!w || wc == 0) { printf("[!] No text loaded.\n"); return; }
 
     // 先做全量词频
     Pair* all = (Pair*)malloc(sizeof(Pair) * 6000);
@@ -1076,8 +1077,8 @@ void sort_and_show_topN_toxic(SortAlg alg, int topN) {
 
 void compare_algorithms_topN(int topN) {
     if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
-    char (*w)[50] = file1Loaded ? words1 : words2;
-    int wc = file1Loaded ? wordCount1 : wordCount2;
+    char (*w)[50]; int wc; pick_tokens(&w, &wc);
+    if (!w || wc == 0) { printf("[!] No text loaded.\n"); return; }
 
     Pair* base = (Pair*)malloc(sizeof(Pair) * 6000);
     Pair* a = (Pair*)malloc(sizeof(Pair) * 6000);
@@ -1136,8 +1137,8 @@ void show_extra_summary(void) {
     if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
     load_toxicwords();
 
-    char (*w)[50] = file1Loaded ? words1 : words2;
-    int wc = file1Loaded ? wordCount1 : wordCount2;
+    char (*w)[50]; int wc; pick_tokens(&w, &wc);
+    if (!w || wc == 0) { printf("[!] No text loaded.\n"); return; }
 
     int toxic_tokens = 0, nontoxic_tokens = 0;
     Pair* all = (Pair*)malloc(sizeof(Pair) * 6000);
@@ -1169,8 +1170,8 @@ void show_extra_summary(void) {
 
 void list_alpha_all(void) {
     if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
-    char (*w)[50] = file1Loaded ? words1 : words2;
-    int wc = file1Loaded ? wordCount1 : wordCount2;
+    char (*w)[50]; int wc; pick_tokens(&w, &wc);
+    if (!w || wc == 0) { printf("[!] No text loaded.\n"); return; }
 
     Pair* arr = (Pair*)malloc(sizeof(Pair) * 6000);
     if (!arr) { printf("[!] OOM\n"); return; }
@@ -1237,18 +1238,20 @@ void menu_sort_and_report(void) {
     int sub = -1;
     do {
         printf("\n=== Sorting & Reporting ===\n");
-        printf("1) Set sort KEY (current: %s)\n",
+        printf("1) Set source file (current: %s)\n",
+            g_use_file == 1 ? "File 1" : (g_use_file == 2 ? "File 2" : "Auto(File1->File2)"));
+        printf("2) Set sort KEY (current: %s)\n",
             g_key == KEY_FREQ_DESC ? "Frequency desc (ties→alpha)" : "Alphabetical (A→Z)");
-        printf("2) Set sort ALGORITHM (current: %s)\n",
+        printf("3) Set sort ALGORITHM (current: %s)\n",
             g_alg == ALG_BUBBLE ? "Bubble" : (g_alg == ALG_QUICK ? "Quick" : "Merge"));
-        printf("3) Toggle secondary tiebreak (current: %s)\n",
+        printf("4) Toggle secondary tiebreak (current: %s)\n",
             g_use_secondary_tiebreak ? "ON (alpha as tiebreak)" : "OFF (pure primary key)");
-        printf("4) Set Top N (current: %d)\n", g_topN);
-        printf("5) Show Top N (ALL words)\n");           // Pass: Top N 高频词
-        printf("6) Show Top N (TOXIC words only)\n");    // Merit: 单独Top N毒词
-        printf("7) Compare algorithms (Top N)\n");       // Distinction: 多算法比较
-        printf("8) Extra summary (toxic ratio)\n");      // Distinction: 额外统计
-        printf("9) List ALL words alphabetically\n");    // Pass: 按字母排序展示（可选）
+        printf("5) Set Top N (current: %d)\n", g_topN);
+        printf("6) Show Top N (ALL words)\n");           // Pass: Top N 高频词
+        printf("7) Show Top N (TOXIC words only)\n");    // Merit: 单独Top N毒词
+        printf("8) Compare algorithms (Top N)\n");       // Distinction: 多算法比较
+        printf("9) Extra summary (toxic ratio)\n");      // Distinction: 额外统计
+        printf("10) List ALL words alphabetically\n");    // Pass: 按字母排序展示（可选）
         printf("0) Back\n");
         printf("Select: ");
 
@@ -1261,12 +1264,22 @@ void menu_sort_and_report(void) {
 
         switch (sub) {
         case 1: {
+            int s;
+            printf("Choose source: 1=File1  2=File2  0=Auto(File1->File2): ");
+            if (scanf("%d", &s) == 1 && (s == 0 || s == 1 || s == 2)) {
+                g_use_file = s;
+            }
+            else {
+                printf("Invalid source. Keep current.\n");
+            }
+        } break;
+        case 2: {
             //设置排序键（频率/字母）
             int k;
             printf("Choose key: 1=Frequency desc (ties→alpha), 2=Alphabetical : ");
             if (scanf("%d", &k) == 1) g_key = (k == 2 ? KEY_ALPHA : KEY_FREQ_DESC);
         } break;
-        case 2: {
+        case 3: {
             //设置算法（冒泡/快速/归并）
             int a;
             printf("Choose algorithm: 1=Bubble  2=Quick  3=Merge : ");
@@ -1276,32 +1289,32 @@ void menu_sort_and_report(void) {
                 else g_alg = ALG_QUICK;
             }
         } break;
-        case 3: 
+        case 4: 
             g_use_secondary_tiebreak = !g_use_secondary_tiebreak;
             printf("Secondary tiebreak is now %s\n",
                 g_use_secondary_tiebreak ? "ON" : "OFF");
             break;
-        case 4: {
+        case 5: {
             //设置 Top N
             int n;
             printf("Enter Top N (>=1): ");
             if (scanf("%d", &n) == 1 && n > 0) g_topN = n;
         } break;
-        case 5:
+        case 6:
             //显示 Top N（全词）
             sort_and_show_topN_all(g_key, g_alg, g_topN);
             break;
-        case 6:
+        case 7:
             // 毒词通常只看频率高→低；若你要支持字母序也可传 g_key
             sort_and_show_topN_toxic(g_alg, g_topN);
             break;
-        case 7:
+        case 8:
             compare_algorithms_topN(g_topN);
             break;
-        case 8:
+        case 9:
             show_extra_summary();
             break;
-        case 9:
+        case 10:
             list_alpha_all();
             break;
         case 0:
@@ -1407,6 +1420,15 @@ static void sort_pairs(Pair a[], int n, SortKey key, SortAlg alg) {
     default:         quick_sort_pairs(a, 0, n - 1, key); break;
     }
     g_stats.ms += (now_ms() - t0);
+}
+
+static void pick_tokens(char (**out_words)[50], int* out_count) {
+    if (g_use_file == 1 && file1Loaded) { *out_words = words1; *out_count = wordCount1; return; }
+    if (g_use_file == 2 && file2Loaded) { *out_words = words2; *out_count = wordCount2; return; }
+    // Auto 模式：沿用你现在的优先级
+    if (file1Loaded) { *out_words = words1; *out_count = wordCount1; return; }
+    if (file2Loaded) { *out_words = words2; *out_count = wordCount2; return; }
+    *out_words = NULL; *out_count = 0;
 }
 
 // ====== Other Functions Remain Unchanged ======
