@@ -173,7 +173,7 @@ static FILE* open_file_read(const char* pathIn) {
     return f;
 }
 
-//file corruption detection
+//file corruption detection - FIXED VERSION
 bool isFileCorrupted(const char* filePath, const char* fileContent, size_t contentSize) {
     if (contentSize == 0) {
         printf("[!] Error : File is empty\n");
@@ -183,82 +183,115 @@ bool isFileCorrupted(const char* filePath, const char* fileContent, size_t conte
     int totalChars = 0;
     int printableChars = 0;
     int controlChars = 0;
-    int consecutiveNonsense = 0;
-    int maxConsecutiveNonsense = 0;
+    int weirdChars = 0;
+    int consecutiveWeird = 0;
+    int maxConsecutiveWeird = 0;
     int wordLikeSequences = 0;
+    int binaryMarkers = 0;
 
-    // Analyze file content characteristics
+    // Define what we consider "weird" characters (non-printable, non-whitespace)
     for (size_t i = 0; i < contentSize; i++) {
         unsigned char c = (unsigned char)fileContent[i];
         totalChars++;
 
-        // Printable characters (including spaces, punctuation)
-        if (isprint(c) || c == '\t' || c == '\n' || c == '\r') {
+        // Normal characters: printable ASCII + common whitespace
+        if ((c >= 32 && c <= 126) || c == '\t' || c == '\n' || c == '\r') {
             printableChars++;
-            consecutiveNonsense = 0;
+            consecutiveWeird = 0;
 
             // Detect word-like sequences (letter sequences)
             if (isalpha(c)) {
-                // Check if this is the start of a word
                 if (i == 0 || !isalpha((unsigned char)fileContent[i - 1])) {
-                    // Check the length of this letter sequence
                     size_t j = i;
                     int wordLen = 0;
                     while (j < contentSize && isalpha((unsigned char)fileContent[j])) {
                         wordLen++;
                         j++;
                     }
-                    if (wordLen >= 2 && wordLen <= 20) { // Reasonable word length
+                    if (wordLen >= 2 && wordLen <= 25) {
                         wordLikeSequences++;
                     }
                 }
             }
         }
         else {
-            // Control characters or non-printable characters
-            controlChars++;
-            consecutiveNonsense++;
-            if (consecutiveNonsense > maxConsecutiveNonsense) {
-                maxConsecutiveNonsense = consecutiveNonsense;
+            // This character is "weird" (non-printable, non-whitespace)
+            weirdChars++;
+            consecutiveWeird++;
+            if (consecutiveWeird > maxConsecutiveWeird) {
+                maxConsecutiveWeird = consecutiveWeird;
             }
+            
+            // Also count as control character for additional metrics
+            controlChars++;
         }
     }
 
-    // Calculate various ratios
+    // Calculate ratios
     double printableRatio = (double)printableChars / totalChars;
+    double weirdRatio = (double)weirdChars / totalChars;
     double controlCharRatio = (double)controlChars / totalChars;
-    double wordDensity = (double)wordLikeSequences / (contentSize / 100.0); // Words per 100 characters
+    double wordDensity = (double)wordLikeSequences / (contentSize / 100.0);
 
-    printf("[i] File analysis: %zu chars, %.1f%% printable, %.1f%% control, word density: %.1f/100chars\n", contentSize, printableRatio * 100, controlCharRatio * 100, wordDensity);
+    printf("[i] File analysis: %zu chars, %.1f%% printable, %.1f%% weird, word density: %.1f/100chars\n", 
+           contentSize, printableRatio * 100, weirdRatio * 100, wordDensity);
 
-    // Corrupted file detection rules
+    // CORRUPTED FILE DETECTION - ONLY IF MORE THAN HALF IS WEIRD
     bool likelyCorrupted = false;
     const char* reason = NULL;
 
-    if (printableRatio < 0.60) { //less than 60% printable characters
+    // MAIN CONDITION: Only corrupt if more than 50% of file is weird characters
+    if (weirdRatio > 0.50) {
         likelyCorrupted = true;
-        reason = "low percentage of printable characters";
+        reason = "more than half the file contains weird/nonsense characters";
     }
-    else if (controlCharRatio > 0.40) { //more than 40% control characters
+    // Additional safety checks for extreme cases
+    else if (printableRatio < 0.10 && contentSize > 100) {
         likelyCorrupted = true;
-        reason = "high percentage of control characters";
+        reason = "extremely low percentage of printable characters (less than 10%)";
     }
-    else if (maxConsecutiveNonsense > 10) { //more than 10 consecutive nonsense characters
+    else if (maxConsecutiveWeird > 100) {
         likelyCorrupted = true;
-        reason = "long sequences of nonsense characters";
+        reason = "extremely long sequences of consecutive weird characters";
     }
-    else if (wordDensity < 0.5 && contentSize > 100) { //extremely low word density in large files
+    else if (wordDensity < 0.1 && contentSize > 500 && weirdRatio > 0.30) {
         likelyCorrupted = true;
-        reason = "extremely low word density";
+        reason = "very low word density with significant weird characters";
     }
 
     if (likelyCorrupted) {
-        printf("[X] Error: File you loaded seems to be corrupted. Reason: %s\n", reason);
-        printf("[X] The file may contain nonsense characters.\n");
-        return true; //stop loading if file is corrupted
+        printf("\n[X] ERROR: Corrupted file detected!\n");
+        printf("[X] Reason: %s\n", reason);
+        printf("[X] The file contains too many nonsense characters.\n");
+        printf("\nRecovery instructions:\n");
+        printf("1. This file contains too many nonsense characters (>50%%)\n");
+        printf("2. Please select a valid text file with mostly readable content\n");
+        printf("3. Ensure the file contains proper text, not binary data\n");
+        printf("4. Try opening the file in a text editor to verify its contents\n");
+        return true;
     }
 
-    return false; //file is normal 
+    // File is normal - can contain some weird characters but not too many
+    printf("[✓] File is valid - contains %.1f%% weird characters (acceptable)\n", weirdRatio * 100);
+    
+    // Show content preview
+    if (contentSize > 0) {
+        printf("Content preview: ");
+        int previewSize = (contentSize < 60) ? contentSize : 60;
+        for (int i = 0; i < previewSize; i++) {
+            unsigned char c = (unsigned char)fileContent[i];
+            if (c >= 32 && c <= 126) {
+                putchar(c);
+            } else if (c == '\t' || c == '\n' || c == '\r') {
+                printf(" ");
+            } else {
+                printf("?"); // Show ? for occasional weird chars
+            }
+        }
+        printf("\n");
+    }
+    
+    return false; // file is normal
 }
 
 // ====== 主程序（更新了选项1的处理）======
