@@ -173,7 +173,7 @@ static FILE* open_file_read(const char* pathIn) {
     return f;
 }
 
-//file corruption detection - FIXED VERSION
+//file corruption detection - FIXED VERSION plsssss DONT CHANGE THIS PART
 bool isFileCorrupted(const char* filePath, const char* fileContent, size_t contentSize) {
     if (contentSize == 0) {
         printf("[!] Error : File is empty\n");
