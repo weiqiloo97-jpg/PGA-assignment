@@ -404,3 +404,59 @@ yellow showers
 yiffy
 zoophilia
 🖕
+annoying
+boring
+clown
+cringe
+coward
+disgrace
+disgusting
+dumb
+fool
+hopeless
+idiot
+ignorant
+loser
+lousy
+messy
+moron
+nobody likes you
+no one cares
+pathetic
+simpleton
+smash
+screwup
+stupid
+taunt
+tryhard
+wannabe
+you suck
+arse
+ass
+asshole
+bollocks
+bugger
+bullshit
+crap
+damn
+dammit
+dickhead
+dipshit
+friggin
+freaking
+fuck
+fucking
+goddamn,2,profanity / common curse word
+holy shit,2,profanity / common curse word
+piss,2,profanity / common curse word
+pissed,2,profanity / common curse word
+prick,2,profanity / common curse word
+shit,2,profanity / common curse word
+shithead,2,profanity / common curse word
+shitshow,2,profanity / common curse word
+son of a gun,2,profanity / common curse word
+twat,2,profanity / common curse word
+wtf,2,profanity / common curse word
+wtheck,2,profanity / common curse word
+go to hell,2,profanity / common curse word
+
