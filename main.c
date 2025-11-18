@@ -85,7 +85,6 @@ void sortAndDisplayTopNWords();
 void saveResultsToFile();
 void loadDictionaries();
 void handleError(const char* message);
-void translateTextToEnglish();
 void displayNegativityScale();
 void displayWordOccurrence();
 void showFileHistory(int fileNumber);
@@ -167,16 +166,16 @@ static FILE* open_file_read(const char* pathIn) {
     FILE* f = fopen(tmp, "r");
 #endif
     if (!f) {
-        fprintf(stderr, "[!] fopen failed for: %s\n", tmp);
+        fprintf(stderr, "[!] Failed to open file for: %s\n", tmp);
         perror("reason");
     }
     return f;
 }
 
-//file corruption detection - FIXED VERSION plsssss DONT CHANGE THIS PART
+//file corruption detection - FIXED VERSION (plsssssssssssssssssssssssssssssssssss DONT CHANGE)
 bool isFileCorrupted(const char* filePath, const char* fileContent, size_t contentSize) {
     if (contentSize == 0) {
-        printf("[!] Error : File is empty\n");
+        printf("[!] Error : We don't accept empty files!\n");
         return false; // Empty file is not considered corrupted, just no content
     }
 
@@ -299,21 +298,20 @@ int main() {
     int userChoice;
 
     for (;;) {
-        printf("\nToxic Word Text Analyser Menu\n");
+        printf("\n\nToxic Word Text Analyser Menu\n");
         printf("1. Load text file for analysis (e.g., enter text file path)\n");
         printf("2. Display general word statistics (e.g., word counts, frequencies)\n");
         printf("3. Display toxic word analysis (e.g., toxicity score)\n");
         printf("4. Sort and display top N words (e.g., by frequency or toxicity)\n");
         printf("5. Save results to output file\n");
         printf("6. Advanced Text Analysis (with stopwords filtering)\n");
-        printf("7. Translate text to English\n");
-        printf("8. Exit program\n");
+        printf("7. Exit program\n");
         printf("Type in a choice or type 8 to exit the system: ");
 
         if (scanf("%d", &userChoice) != 1) {
             // 清理错误输入
             int c; while ((c = getchar()) != '\n' && c != EOF);
-            printf("Invalid input. Please enter a number 1-8.\n");
+            printf("Invalid input. Please enter a number 1-8!\n");
             continue;
         }
         // 吃掉行尾换行，方便后面用 read_line 读路径
@@ -379,10 +377,6 @@ int main() {
             break;
 
         case 7:
-            translateTextToEnglish();
-            break;
-
-        case 8:
             printf("Exiting the system... Goodbye!\n");
             return 0;  // 真正退出
 
@@ -1066,7 +1060,7 @@ void sort_and_show_topN_all(SortKey key, SortAlg alg, int topN) {
     if (topN > n) topN = n;
     printf("\n-- Top %d (%s, %s) --\n",
         topN,
-        key == KEY_FREQ_DESC ? "freq desc" : "A→Z",
+        key == KEY_FREQ_DESC ? "freq desc" : "A->Z",
         alg == ALG_BUBBLE ? "Bubble" : (alg == ALG_QUICK ? "Quick" : "Merge"));
     for (int i = 0; i < topN; ++i) {
         printf("%2d. %-20s %d\n", i + 1, arr[i].word, arr[i].count);
@@ -1274,7 +1268,7 @@ void menu_sort_and_report(void) {
         printf("1) Set source file (current: %s)\n",
             g_use_file == 1 ? "File 1" : (g_use_file == 2 ? "File 2" : "Auto(File1->File2)"));
         printf("2) Set sort KEY (current: %s)\n",
-            g_key == KEY_FREQ_DESC ? "Frequency desc (ties→alpha)" : "Alphabetical (A→Z)");
+            g_key == KEY_FREQ_DESC ? "Frequency desc (ties->alpha)" : "Alphabetical (A->Z)");
         printf("3) Set sort ALGORITHM (current: %s)\n",
             g_alg == ALG_BUBBLE ? "Bubble" : (g_alg == ALG_QUICK ? "Quick" : "Merge"));
         printf("4) Toggle secondary tiebreak (current: %s)\n",
@@ -1309,7 +1303,7 @@ void menu_sort_and_report(void) {
         case 2: {
             //设置排序键（频率/字母）
             int k;
-            printf("Choose key: 1=Frequency desc (ties→alpha), 2=Alphabetical : ");
+            printf("Choose key: 1=Frequency desc (ties->alpha), 2=Alphabetical : ");
             if (scanf("%d", &k) == 1) g_key = (k == 2 ? KEY_ALPHA : KEY_FREQ_DESC);
         } break;
         case 3: {
@@ -1548,15 +1542,6 @@ void loadDictionaries() {
 
 void handleError(const char* message) {
     printf("Error: %s\n", message);
-}
-
-void translateTextToEnglish() {
-    char sentence[256];
-    printf("Enter a non-English sentence to translate: ");
-    if (!read_line(sentence, sizeof(sentence))) {
-        printf("Failed to read sentence.\n"); return;
-    }
-    printf("Translating...\nTranslated text: %s\n", sentence);
 }
 
 void displayNegativityScale() {
