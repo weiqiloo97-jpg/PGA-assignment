@@ -446,17 +446,120 @@ friggin
 freaking
 fuck
 fucking
-goddamn,2,profanity / common curse word
-holy shit,2,profanity / common curse word
-piss,2,profanity / common curse word
-pissed,2,profanity / common curse word
-prick,2,profanity / common curse word
-shit,2,profanity / common curse word
-shithead,2,profanity / common curse word
-shitshow,2,profanity / common curse word
-son of a gun,2,profanity / common curse word
-twat,2,profanity / common curse word
-wtf,2,profanity / common curse word
-wtheck,2,profanity / common curse word
-go to hell,2,profanity / common curse word
-
+goddamn
+holy shit
+piss
+pissed
+prick
+shit
+shithead
+shitshow
+son of a gun
+twat
+wtf
+wtheck
+go to hell
+airbrain
+baldy
+big nose
+butterface
+chubby
+chunky
+crazy freak
+cripple
+dumbhead
+fat
+fatso
+fat pig
+flat-chested
+four eyes
+greasy face
+hideous
+mental
+midget
+pimpleface
+shorty
+skinny
+ugly
+ugly cow
+whale
+zitface
+animal people
+beaner
+bitch
+camel jockey
+chink
+cunt
+dyke
+feminazi
+femoid
+filthy animal
+gook
+gypsy
+harlot
+heathen
+heretic
+inferior race
+infidel
+kike
+ladyboy
+manwhore
+misogynist
+nigga
+nigger
+paki
+pickme girl
+pussy
+queer (as insult)
+sand nigger
+shemale
+superior race
+terrorist
+towelhead
+tranny
+white trash
+whore
+bleed out
+burn in hell
+die in a fire
+die painfully
+drop dead already
+end your life
+go die
+go kill yourself
+i’ll kill you
+jump off
+kill yourself
+rot in hell
+you should die
+your people don’t belong here
+your race is inferior
+you don’t deserve rights
+people like you should disappear
+erase your entire kind
+you should not exist
+drive them out
+ban your whole group
+purge your community
+i will kill you
+i will murder you
+i will hunt you down
+i will slit your throat
+stab you to death
+shoot you dead
+cut your head off
+burn your house down
+burn you alive
+i hope you die tonight
+you won’t live long
+drink poison and die
+hang yourself now
+jump off a bridge now
+wipe out your whole race
+your people should be exterminated
+gas all of you
+send you to the gas chamber
+eliminate your entire kind
+bomb your house
+blow yourself up
+kill them all
