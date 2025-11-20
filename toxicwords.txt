@@ -1,0 +1,297 @@
+# Toxic Words Dictionary
+# Format: word,severity
+# Severity: 1-5 (1=mild, 5=severe)
+
+airbrain,3
+airhead,1
+annihilate,5
+anorexic,1
+ape,1
+arse,2
+arsehole,2
+ass,2
+asses,2
+asshat,2
+asshole,2
+baldy,3
+bastard,1
+beaner,4
+beast,1
+beat,1
+bimbo,1
+bitch,3
+blockhead,1
+bloody,2
+bollocks,2
+bomb,3
+bonehead,1
+boring,1
+brainless,1
+bugger,2
+bullshit,2
+bully,1
+bullying,1
+burden,1
+burn,1
+butterface,3
+careless,1
+chink,4
+chubby,3
+chunky,3
+clown,1
+clueless,1
+cow,1
+coward,1
+crap,2
+crapilicious,2
+crazy,1
+creep,1
+cringe,1
+cripple,3
+cunt,3
+cuntandandre,3
+dammit,2
+damn,2
+damned,2
+deadbeat,1
+degenerate,1
+degrade,1
+demean,1
+destroy,1
+dick,2
+dickhead,2
+die,5
+dimwit,1
+dipshit,2
+disgrace,1
+disgusting,1
+dominatrix,3
+douche,1
+douchebag,1
+dull,1
+dumb,1
+dumbass,2
+dumbhead,3
+dyke,4
+edgelord,1
+exterminate,5
+faggot,4
+fat,3
+fatso,3
+feminazi,3
+femoid,3
+filth,1
+flat,3
+flat-chested,3
+fool,1
+foolish,1
+freak,1
+freaking,2
+friggin,2
+fuck,2
+fucking,2
+garbage,1
+goddamn,2
+gold-digger,1
+gook,4
+greasy,1
+groomer,1
+gross,1
+gypsy,4
+halfwit,1
+hang,3
+harass,2
+harlot,3
+heathen,4
+hell,2
+heretic,4
+hideous,3
+hoe,1
+homewrecker,1
+hopeless,1
+humiliate,1
+idiot,1
+ignorant,1
+imbecile,1
+incel,1
+infidel,4
+insane,1
+jackass,2
+jerk,1
+jerkoff,1
+kike,4
+kill,3
+ladyboy,4
+lame,1
+lardass,3
+lazy,1
+leecher,1
+loser,1
+loserface,1
+lousy,1
+lowlife,1
+lunatic,1
+lynch,3
+madman,1
+manbaby,1
+manwhore,3
+meathead,1
+mental,3
+messy,1
+midget,3
+mindless,1
+misogynist,3
+mock,1
+monkey,1
+moron,1
+motherfucker,2
+murder,5
+nasty,1
+neckbeard,1
+nigga,4
+nigger,4
+nincompoop,1
+nitwit,1
+nutcase,1
+obese,3
+ostracize,1
+paki,4
+parasite,1
+pathetic,1
+pedophile,4
+pick-me,1
+pig,1
+pimpleface,3
+piss,1
+pissed,1
+prick,2
+psycho,1
+pussy,3
+rape,5
+rapist,5
+retard,3
+retarded,3
+ridicule,1
+rodent,1
+savage,1
+screw,1
+screwed,1
+screwup,1
+scum,1
+shame,1
+shemale,4
+shit,2
+shithead,2
+shitshow,2
+shoot,4
+shorty,3
+sicko,1
+simp,1
+simpleton,1
+skank,1
+skeleton,1
+skinny,3
+slaughter,5
+slut,3
+smash,1
+snowflake,1
+soyboy,1
+spic,4
+stab,4
+stupid,1
+subhuman,1
+submissive,1
+taunt,1
+terrorist,4
+thot,1
+tool,1
+towelhead,4
+tramp,1
+tranny,4
+trash,1
+troll,1
+tryhard,1
+turbocunt,3
+twat,2
+ugly,3
+useless,1
+vermin,1
+vile,1
+villainize,1
+vulgar,1
+wanker,2
+wannabe,1
+weak,1
+weirdo,1
+whale,3
+whore,3
+witch,1
+worm,1
+worthless,1
+zitface,3
+queer,4
+alive,1
+burn in hell,2
+crazy freak,1
+fat pig,3
+pathetic loser,1
+simp loser,1
+ugly cow,3
+useless idiot,1
+wannabe loser,1
+worthless trash,1
+dirty filthy animal,3
+fat ugly whore,3
+crazy dumb bitch,3
+stupid fucking idiot,2
+ugly fat pig,3
+weak pathetic loser,1
+go away,1
+get lost,1
+go home,1
+leave me alone,1
+go somewhere else,1
+who asked you,1
+no one cares,1
+nobody likes you,1
+stop talking,1
+shut up,1
+do not talk to me,1
+go cry somewhere else,1
+you are nothing,1
+you do not matter,1
+get a life,2
+stop embarrassing yourself,2
+you are a joke,2
+you are a failure,2
+you are a problem,2
+you are annoying,2
+blow your brains out,5
+bleed out,5
+cut your wrists,5
+jump off a bridge,5
+end your life,5
+go rot somewhere,3
+go back to your country,4
+inferior race,4
+superior race,4
+camel jockey,4
+you should disappear,3
+nobody would miss you,3
+you deserve nothing,3
+you deserve misery,3
+you deserve pain,3
+you should suffer,3
+you should rot forever,3
+you do not deserve happiness,3
+animal people,3
+attention seeker,1
+beta cuck,3
+beta male,1
+big nose,3
+dirty foreigner,4
+dirty immigrant,4
+filthy animal,3
+four eyes,3
+inferior race,4
+superior race,4
