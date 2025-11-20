@@ -1,0 +1,2159 @@
+#define _CRT_SECURE_NO_WARNINGS
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdbool.h>
+#include <time.h>
+#include <math.h>
+
+// ====== 配置常量 ======
+#define MAX_WORDS 40000
+#define MAX_WORD_LENGTH 50
+#define MAX_STOPWORDS 500
+#define MAX_TEXT_LENGTH 200000
+#define MAX_VARIANTS 300
+#define MAX_TOXIC_WORDS 1000
+#define MAX_PHRASES 500
+#define ISALPHA(c) isalpha((unsigned char)(c))
+#define TOLOWER(c) tolower((unsigned char)(c))
+
+// ====== STAGE 2 数据结构 ======
+struct WordInfo {
+    char word[MAX_WORD_LENGTH];
+    int count;
+};
+
+struct VariantMap {
+    char variant[MAX_WORD_LENGTH];
+    char standard[MAX_WORD_LENGTH];
+};
+// ========== STAGE 2 数据结构结束 ==========
+
+// ========== STAGE 3 数据结构 ==========
+struct ToxicWord {
+    char word[MAX_WORD_LENGTH];
+    int severity; // 1-5 scale
+    int frequency;
+};
+
+struct ToxicPhrase {
+    char phrase[MAX_WORD_LENGTH * 3];
+    int severity; // 1-5 scale
+    int frequency;
+    int ngram_len; // 2 = bigram, 3 = trigram（>3 的就当 0 或以后扩展）
+};
+// ========== STAGE 3 数据结构结束 ==========
+
+struct AnalysisData {
+    char* text;
+    struct WordInfo* words;
+    int word_count;
+    int total_words_filtered;
+    int total_chars;
+    int sentences;
+    int stopwords_removed;
+    int total_words_original;
+    char stopwords[MAX_STOPWORDS][MAX_WORD_LENGTH];
+    int stop_count;
+    char** filtered_word_list;
+    int filtered_word_count;
+    struct VariantMap variant_mappings[MAX_VARIANTS];
+    int variant_count;
+    bool variant_processing_enabled;
+    char** original_word_list;
+    int original_word_count;
+    bool text_filtered;
+
+    // ========== STAGE 3 字段 ==========
+    struct ToxicWord toxic_words_list[MAX_TOXIC_WORDS];
+    struct ToxicPhrase toxic_phrases_list[MAX_PHRASES];
+    int toxic_words_count;
+    int toxic_phrases_count;
+    int total_toxic_occurrences;
+    int severity_count[6]; // 1-5 for severity levels
+    float toxicity_density;
+    int bigram_toxic_occurrences;
+    int trigram_toxic_occurrences;
+    // ========== STAGE 3 字段结束 ==========
+};
+
+// ====== 全局变量 ======
+struct AnalysisData analysis_data;
+char current_filename[256] = "";
+char current_manual_filtered_filename[256] = "";
+bool user_manually_saved_current_session = false; // 跟踪当前会话是否手动保存
+
+// ====== 函数声明 ======
+char get_menu_option(const char* valid_options, const char* prompt);
+
+// ========== STAGE 2 函数声明 ==========
+int read_line(char* buf, size_t cap);
+int load_stopwords(char stopwords[][MAX_WORD_LENGTH]);
+int is_stopword(char* word, char stopwords[][MAX_WORD_LENGTH], int stop_count);
+static const char* DELIMS = " \t\r\n.,!?;:\"()[]{}@#<>/\\|*_~^`=+-&$%";
+void process_text_file(const char* filename);
+void cleanup_analysis_data();
+void display_main_menu();
+void display_analysis_menu();
+void word_analysis();
+void save_filtered_word_list_auto(const char* filename);
+void save_filtered_word_list();
+void sort_by_frequency(struct WordInfo words[], int count);
+void init_basic_variants();
+int load_variant_mappings(const char* filename);
+char* normalize_variant(char* word);
+void toggle_variant_processing();
+void reprocess_with_variants();
+void add_token_to_analysis(const char* tok, int* removed_by_stopwords);
+// ========== STAGE 2 函数声明结束 ==========
+
+// ========== STAGE 3 函数声明 ==========
+void load_toxic_data(const char* filename);
+int is_toxic_word(const char* word);
+int get_toxic_severity(const char* word);
+void detect_toxic_content(const char* word);
+void detect_toxic_phrases();
+void run_toxic_analysis();
+void reset_toxic_counts();
+bool file_exists(const char* filename);
+int string_case_insensitive_compare(const char* s1, const char* s2);
+
+// Stage 3 菜单函数
+void display_toxic_menu();
+void toxic_analysis();
+void dictionary_management();
+void save_toxic_dictionary(const char* filename);
+void view_all_toxic_words();
+
+// Stage 3 工具函数
+void calculate_toxicity_density();
+void add_custom_toxic_word();
+void remove_toxic_word();
+int phrase_contains_toxic_words(const char* phrase,char found_words[][MAX_WORD_LENGTH],int max_found,int* max_severity);
+void add_custom_toxic_phrase(const char* phrase);
+// ========== STAGE 3 函数声明结束 ==========
+
+// ====== 主函数 ======
+int main() {
+    printf("=================================\n");
+    printf("ADVANCED TEXT ANALYSIS WITH TOXICITY DETECTION\n");
+    printf("=================================\n\n");
+
+    // 初始化分析数据
+    memset(&analysis_data, 0, sizeof(analysis_data));
+    analysis_data.variant_processing_enabled = false;
+
+    // 重置手动保存标志
+    user_manually_saved_current_session = false;
+
+    // 静默初始化基本变体映射
+    init_basic_variants();
+    load_variant_mappings("variant_mappings.txt");
+
+    // ========== STAGE 3 初始化 ==========
+    load_toxic_data("toxicwords.txt");
+    // ========== STAGE 3 初始化结束 ==========
+
+    display_main_menu();
+
+    cleanup_analysis_data();
+    printf("\nThank you for using Text Analyser. Goodbye!\n");
+    return 0;
+}
+
+// 安全的菜单选择输入
+char get_menu_option(const char* valid_options, const char* prompt) {
+    char buffer[100];
+    char option;
+
+    while (1) {
+        printf("%s", prompt);
+
+        if (!read_line(buffer, sizeof(buffer))) {
+            printf("Input error. Please try again.\n");
+            continue;
+        }
+
+        // 检查是否为空输入
+        if (strlen(buffer) == 0) {
+            printf("Please enter a option.\n");
+            continue;
+        }
+
+        // 检查是否只输入了一个字符
+        if (strlen(buffer) != 1) {
+            printf("Error: Please enter exactly one character.\n");
+            continue;
+        }
+
+        // 只取第一个字符
+        option = buffer[0];
+
+        // 检查是否是有效选择
+        if (strchr(valid_options, option) != NULL) {
+            return option;
+        }
+        else {
+            if (strlen(valid_options) == 1) {
+                printf("Invalid option. Please select option %c.\n", valid_options[0]);
+            }
+            else {
+                printf("Invalid option. Please select from options %c to %c.\n",
+                    valid_options[0], valid_options[strlen(valid_options) - 1]);
+            }
+        }
+    }
+}
+
+// ========== STAGE 2 函数实现 ==========
+
+// ====== 核心功能函数 ======
+
+// 安全读取一行输入
+int read_line(char* buf, size_t cap) {
+    if (!fgets(buf, (int)cap, stdin)) return 0;
+    size_t n = strlen(buf);
+    while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r'))
+        buf[--n] = '\0';
+    return 1;
+}
+
+// 加载停用词列表
+int load_stopwords(char stopwords[][MAX_WORD_LENGTH]) {
+    FILE* file = fopen("stopwords.txt", "r");
+    if (file == NULL) {
+        printf("Error: Cannot open stopwords.txt\n");
+        printf("Please ensure stopwords.txt is in the same directory.\n");
+        return 0;
+    }
+
+    int count = 0;
+    char line[MAX_WORD_LENGTH];
+
+    while (fgets(line, sizeof(line), file) && count < MAX_STOPWORDS) {
+        line[strcspn(line, "\n")] = '\0';
+        for (int i = 0; line[i]; i++) {
+            line[i] = (char)TOLOWER(line[i]);
+        }
+        if (strlen(line) > 0) {
+            strcpy(stopwords[count], line);
+            count++;
+        }
+    }
+
+    fclose(file);
+    printf("Loaded %d stopwords from stopwords.txt\n", count);
+    return count;
+}
+
+// 检查是否为停用词
+int is_stopword(char* word, char stopwords[][MAX_WORD_LENGTH], int stop_count) {
+    for (int i = 0; i < stop_count; i++) {
+        if (strcmp(word, stopwords[i]) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// 变体映射功能
+void init_basic_variants() {
+    // 只保留绝对必要的核心映射，其他都放在外部文件中
+    const char* core_mappings[][2] = {
+        {"u", "you"},
+        {"ur", "your"},
+        {"r", "are"},
+        {"lol", "laughing out loud"},
+        {"btw", "by the way"},
+        {"omg", "oh my god"}
+    };
+
+    int num_core = sizeof(core_mappings) / sizeof(core_mappings[0]);
+    for (int i = 0; i < num_core && analysis_data.variant_count < MAX_VARIANTS; i++) {
+        strcpy(analysis_data.variant_mappings[analysis_data.variant_count].variant, core_mappings[i][0]);
+        strcpy(analysis_data.variant_mappings[analysis_data.variant_count].standard, core_mappings[i][1]);
+        analysis_data.variant_count++;
+    }
+    // 从文件加载额外的映射
+    int loaded = load_variant_mappings("variant_mappings.txt");
+    printf("Initialized %d core variants + loaded %d mappings from file (total %d, limit %d)\n",
+        num_core, loaded, analysis_data.variant_count, MAX_VARIANTS);;
+}
+
+int load_variant_mappings(const char* filename) {
+    FILE* file = fopen(filename, "r");
+    if (file == NULL) {
+        return 0;
+    }
+
+    int loaded = 0;
+    char line[256];
+    int is_first_line = 1;  // 跳过表头
+
+    while (fgets(line, sizeof(line), file) && analysis_data.variant_count < MAX_VARIANTS) {
+        if (line[0] == '\n' || line[0] == '#' || line[0] == '\r') {
+            continue;
+        }
+
+        line[strcspn(line, "\n")] = '\0';
+        line[strcspn(line, "\r")] = '\0';
+
+        // 跳过表头行
+        if (is_first_line && (strstr(line, "Input Form") != NULL || strstr(line, "Normalized Form") != NULL)) {
+            is_first_line = 0;
+            continue;
+        }
+        is_first_line = 0;
+
+        char* separator = strchr(line, '=');
+        if (separator == NULL) {
+            continue;
+        }
+
+        *separator = '\0';
+        char* variant = line;
+        char* standard = separator + 1;
+
+        while (*variant == ' ') variant++;
+        while (*standard == ' ') standard++;
+
+        char* end = variant + strlen(variant) - 1;
+        while (end > variant && *end == ' ') *end-- = '\0';
+
+        end = standard + strlen(standard) - 1;
+        while (end > standard && *end == ' ') *end-- = '\0';
+
+        if (strlen(variant) > 0 && strlen(standard) > 0) {
+            strncpy(analysis_data.variant_mappings[analysis_data.variant_count].variant,
+                variant, MAX_WORD_LENGTH - 1);
+            strncpy(analysis_data.variant_mappings[analysis_data.variant_count].standard,
+                standard, MAX_WORD_LENGTH - 1);
+
+            analysis_data.variant_mappings[analysis_data.variant_count].variant[MAX_WORD_LENGTH - 1] = '\0';
+            analysis_data.variant_mappings[analysis_data.variant_count].standard[MAX_WORD_LENGTH - 1] = '\0';
+
+            analysis_data.variant_count++;
+            loaded++;
+        }
+    }
+
+    fclose(file);
+    return loaded;
+}
+
+char* normalize_variant(char* word) {
+    if (!analysis_data.variant_processing_enabled) {
+        return word;
+    }
+
+    for (int i = 0; i < analysis_data.variant_count; i++) {
+        if (strcmp(word, analysis_data.variant_mappings[i].variant) == 0) {
+            return analysis_data.variant_mappings[i].standard;
+        }
+    }
+    return word;
+}
+
+void toggle_variant_processing() {
+    analysis_data.variant_processing_enabled = !analysis_data.variant_processing_enabled;
+    printf("\nText Normalization Processing is now %s\n",
+        analysis_data.variant_processing_enabled ? "ENABLED" : "DISABLED");
+
+    printf("Loaded %d normalization mappings\n", analysis_data.variant_count);
+
+    // 显示从实际映射中抽取的示例
+    printf("\nSample text normalizations that will be applied:\n");
+    printf("+-----------------+-----------------------+\n");
+    printf("| Input Form      | Normalized Form       |\n");
+    printf("+-----------------+-----------------------+\n");
+
+    // 分类收集示例
+    struct Example {
+        char variant[MAX_WORD_LENGTH];
+        char standard[MAX_WORD_LENGTH];
+        int is_leet;
+    };
+
+    struct Example abbreviations[MAX_VARIANTS];
+    struct Example leet_examples[MAX_VARIANTS];
+    int abbr_count = 0;
+    int leet_count = 0;
+
+    // 分类映射
+    for (int i = 0; i < analysis_data.variant_count; i++) {
+        const char* variant = analysis_data.variant_mappings[i].variant;
+        int has_digits = 0;
+        int has_special = 0;
+
+        // 检查是否是Leet Speak（包含数字或特殊字符）
+        for (int j = 0; variant[j]; j++) {
+            if (isdigit((unsigned char)variant[j])) {
+                has_digits = 1;
+            }
+            if (!isalnum((unsigned char)variant[j]) && variant[j] != ' ') {
+                has_special = 1;
+            }
+        }
+
+        if (has_digits || has_special) {
+            // Leet Speak
+            if (leet_count < analysis_data.variant_count) {
+                strcpy(leet_examples[leet_count].variant, variant);
+                strcpy(leet_examples[leet_count].standard,
+                    analysis_data.variant_mappings[i].standard);
+                leet_examples[leet_count].is_leet = 1;
+                leet_count++;
+            }
+        }
+        else {
+            // 普通缩写
+            if (abbr_count < analysis_data.variant_count) {
+                strcpy(abbreviations[abbr_count].variant, variant);
+                strcpy(abbreviations[abbr_count].standard,
+                    analysis_data.variant_mappings[i].standard);
+                abbreviations[abbr_count].is_leet = 0;
+                abbr_count++;
+            }
+        }
+    }
+
+    // 显示3个缩写示例
+    int abbr_shown = 0;
+    for (int i = 0; i < abbr_count && abbr_shown < 3; i++) {
+        printf("| %-15s | %-21s |\n",
+            abbreviations[i].variant, abbreviations[i].standard);
+        abbr_shown++;
+    }
+
+    // 显示3个Leet Speak示例  
+    int leet_shown = 0;
+    for (int i = 0; i < leet_count && leet_shown < 3; i++) {
+        printf("| %-15s | %-21s |\n",
+            leet_examples[i].variant, leet_examples[i].standard);
+        leet_shown++;
+    }
+
+    printf("+-----------------+-----------------------+\n");
+
+    if (analysis_data.variant_processing_enabled) {
+        printf("Effect: Expands abbreviations and normalizes Leet Speak to standard vocabulary to improve analysis accuracy\n");
+        printf("      - Abbreviations expanded (e.g., 'u' becomes 'you')\n");
+        printf("      - Leet Speak decoded (e.g., 'l33t' becomes 'leet')\n");
+    }
+
+    if (analysis_data.text_filtered) {
+        printf("\nRe-processing text...\n");
+        int previous_word_count = analysis_data.total_words_filtered;
+        int previous_unique_words = analysis_data.word_count;
+
+        reprocess_with_variants();
+
+        printf("Text re-processing completed!\n");
+
+        // 用文字描述变化而不是表格
+        int word_change = analysis_data.total_words_filtered - previous_word_count;
+        int unique_change = analysis_data.word_count - previous_unique_words;
+
+        printf("\nText statistics updated:\n");
+        printf("  * Total words: %d -> %d (%+d)\n", previous_word_count, analysis_data.total_words_filtered, word_change);
+        printf("  * Unique words: %d -> %d (%+d)\n", previous_unique_words, analysis_data.word_count, unique_change);
+        printf("  * New words introduced by expansion: %d\n", word_change > 0 ? word_change : 0);
+
+        if (analysis_data.variant_processing_enabled && word_change > 0) {
+            printf("\nWord count increased because texts were normalised:\n");
+            printf("  * Some short forms become multiple words (e.g., 'btw' -> 'by the way')\n");
+            printf("  * Leet Speak is converted to standard spelling\n");
+            printf("  * This improves vocabulary analysis by using standard words\n");
+        }
+        else if (analysis_data.variant_processing_enabled && word_change == 0) {
+            printf("\nNote: Text Normalisations were processed but word count remained the same\n");
+            printf("  * Single-word mappings don't change total count (e.g., 'u' -> 'you')\n");
+            printf("  * Leet Speak mappings that are single words also don't change count\n");
+        }
+    }
+}
+
+// 辅助函数：将单词添加到分析中
+void add_token_to_analysis(const char* tok, int* removed_by_stopwords) {
+    if (!tok || !*tok) return;
+
+    // 检查是否包含字母
+    int has_letters = 0;
+    for (int j = 0; tok[j]; j++) {
+        if (ISALPHA(tok[j])) { has_letters = 1; break; }
+    }
+    if (!has_letters) return;
+
+    // 检查停用词
+    if (is_stopword((char*)tok, analysis_data.stopwords, analysis_data.stop_count)) {
+        (*removed_by_stopwords)++;
+        return;
+    }
+
+    // 添加到过滤词列表
+    if (analysis_data.filtered_word_list != NULL &&
+        analysis_data.filtered_word_count < MAX_WORDS) {
+        strncpy(analysis_data.filtered_word_list[analysis_data.filtered_word_count],
+            tok, MAX_WORD_LENGTH - 1);
+        analysis_data.filtered_word_list[analysis_data.filtered_word_count][MAX_WORD_LENGTH - 1] = '\0';
+    }
+    analysis_data.filtered_word_count++;
+    analysis_data.total_words_filtered++;
+    analysis_data.total_chars += (int)strlen(tok);
+
+    // 更新词频统计
+    if (analysis_data.words != NULL) {
+        int found = 0;
+        for (int k = 0; k < analysis_data.word_count; k++) {
+            if (strcmp(analysis_data.words[k].word, tok) == 0) {
+                analysis_data.words[k].count++;
+                found = 1;
+                break;
+            }
+        }
+        if (!found && analysis_data.word_count < MAX_WORDS) {
+            strcpy(analysis_data.words[analysis_data.word_count].word, tok);
+            analysis_data.words[analysis_data.word_count].count = 1;
+            analysis_data.word_count++;
+        }
+    }
+}
+
+// 动态重新处理文本
+void reprocess_with_variants() {
+    if (analysis_data.original_word_list == NULL) return;
+
+    // 重置统计
+    analysis_data.total_words_filtered = 0;
+    analysis_data.total_chars = 0;
+    analysis_data.word_count = 0;
+    analysis_data.filtered_word_count = 0;
+
+    if (analysis_data.words != NULL) {
+        memset(analysis_data.words, 0, MAX_WORDS * sizeof(struct WordInfo));
+    }
+
+    int variants_normalized = 0;
+    int removed_by_stopwords = 0;
+    int considered_tokens = 0;
+
+    for (int i = 0; i < analysis_data.original_word_count && analysis_data.filtered_word_count < MAX_WORDS; i++) {
+        char current_word[MAX_WORD_LENGTH];
+        strncpy(current_word, analysis_data.original_word_list[i], MAX_WORD_LENGTH - 1);
+        current_word[MAX_WORD_LENGTH - 1] = '\0';
+        if (!*current_word) continue;
+
+        // 应用变体映射（若启用）
+        char* normalized = normalize_variant(current_word);
+
+        if (normalized != current_word) {
+            variants_normalized++;
+
+            // 短语映射：拆分为多个词逐个处理
+            if (strchr(normalized, ' ') != NULL) {
+                char phrase_buf[MAX_WORD_LENGTH * 4];
+                strncpy(phrase_buf, normalized, sizeof(phrase_buf) - 1);
+                phrase_buf[sizeof(phrase_buf) - 1] = '\0';
+
+                char* part = strtok(phrase_buf, " ");
+                while (part && analysis_data.filtered_word_count < MAX_WORDS) {
+                    int has_letters = 0;
+                    for (int j = 0; part[j]; j++) {
+                        if (ISALPHA(part[j])) {
+                            has_letters = 1;
+                            break;
+                        }
+                    }
+
+                    if (*part && has_letters) {
+                        considered_tokens++;
+                        add_token_to_analysis(part, &removed_by_stopwords);
+                    }
+                    part = strtok(NULL, " ");
+                }
+                continue;
+            }
+
+            // 单词映射
+            strncpy(current_word, normalized, MAX_WORD_LENGTH - 1);
+            current_word[MAX_WORD_LENGTH - 1] = '\0';
+        }
+
+        // 检查是否包含字母
+        int has_letters = 0;
+        for (int j = 0; current_word[j]; j++) {
+            if (ISALPHA(current_word[j])) {
+                has_letters = 1;
+                break;
+            }
+        }
+
+        if (has_letters) {
+            considered_tokens++;
+            add_token_to_analysis(current_word, &removed_by_stopwords);
+        }
+    }
+
+    analysis_data.stopwords_removed = considered_tokens - analysis_data.total_words_filtered;
+
+    // 只在需要时打印变体扩展信息（现在由调用者控制）
+    if (analysis_data.variant_processing_enabled && variants_normalized > 0) {
+        printf("  - Text forms normalised: %d (abbreviations and Leet Speak)\n", variants_normalized);
+    }
+}
+
+// 处理文本文件
+void process_text_file(const char* filename) {
+    printf("\nProcessing file: %s\n", filename);
+    strncpy(current_filename, filename, sizeof(current_filename) - 1);
+    current_filename[sizeof(current_filename) - 1] = '\0';
+
+    // 清理旧数据
+    cleanup_analysis_data();
+
+    // 重置手动保存标志
+    user_manually_saved_current_session = false;
+
+    // 加载停用词
+    analysis_data.stop_count = load_stopwords(analysis_data.stopwords);
+    if (analysis_data.stop_count == 0) {
+        printf("Cannot continue without stopwords.\n");
+        return;
+    }
+
+    // 打开文件
+    FILE* file = fopen(filename, "r");
+    if (file == NULL) {
+        printf("ERROR: Cannot open file: %s\n", filename);
+        return;
+    }
+
+    // 分配文本缓冲区
+    analysis_data.text = (char*)malloc(MAX_TEXT_LENGTH);
+    if (!analysis_data.text) {
+        printf("Error: Memory allocation failed\n");
+        fclose(file);
+        return;
+    }
+    memset(analysis_data.text, 0, MAX_TEXT_LENGTH);
+
+    size_t used = 0;
+    analysis_data.total_words_original = 0;
+    char line[1000];
+
+    printf("Reading file content...\n");
+    while (fgets(line, sizeof(line), file)) {
+        size_t len = strlen(line);
+        if (used + len + 1 >= MAX_TEXT_LENGTH) break;
+        memcpy(analysis_data.text + used, line, len);
+        used += len;
+        analysis_data.text[used] = '\0';
+
+        // 统计原始词数
+        char line_copy[1000];
+        strcpy(line_copy, line);
+        char* token_tmp = strtok(line_copy, DELIMS);
+        while (token_tmp) {
+            analysis_data.total_words_original++;
+            token_tmp = strtok(NULL, DELIMS);
+        }
+    }
+    fclose(file);
+
+    // 处理非ASCII字符
+    for (size_t i = 0; analysis_data.text[i]; ++i) {
+        unsigned char ch = (unsigned char)analysis_data.text[i];
+        if (ch > 127) analysis_data.text[i] = ' ';
+    }
+
+    printf("File reading completed. Total words in file: %d\n", analysis_data.total_words_original);
+    if (analysis_data.text[0] == '\0') {
+        printf("ERROR: No content read from file\n");
+        return;
+    }
+
+    // 分配内存
+    analysis_data.words = (struct WordInfo*)calloc(MAX_WORDS, sizeof(struct WordInfo));
+    if (!analysis_data.words) {
+        printf("Error: Memory allocation failed\n");
+        return;
+    }
+
+    analysis_data.filtered_word_list = (char**)calloc(MAX_WORDS, sizeof(char*));
+    if (!analysis_data.filtered_word_list) {
+        printf("Error: Memory allocation failed\n");
+        free(analysis_data.words);
+        analysis_data.words = NULL;
+        return;
+    }
+
+    for (int i = 0; i < MAX_WORDS; i++) {
+        analysis_data.filtered_word_list[i] = (char*)malloc(MAX_WORD_LENGTH);
+        if (!analysis_data.filtered_word_list[i]) {
+            for (int j = 0; j < i; j++) free(analysis_data.filtered_word_list[j]);
+            free(analysis_data.filtered_word_list);
+            analysis_data.filtered_word_list = NULL;
+            printf("Error: Memory allocation failed\n");
+            free(analysis_data.words);
+            analysis_data.words = NULL;
+            return;
+        }
+    }
+
+    // 分配原始词列表
+    analysis_data.original_word_list = (char**)calloc(MAX_WORDS, sizeof(char*));
+    if (!analysis_data.original_word_list) {
+        printf("Error: Memory allocation failed for original word list\n");
+        return;
+    }
+
+    for (int i = 0; i < MAX_WORDS; i++) {
+        analysis_data.original_word_list[i] = (char*)malloc(MAX_WORD_LENGTH);
+        if (!analysis_data.original_word_list[i]) {
+            for (int j = 0; j < i; j++) free(analysis_data.original_word_list[j]);
+            free(analysis_data.original_word_list);
+            analysis_data.original_word_list = NULL;
+            printf("Error: Memory allocation failed for original word list\n");
+            return;
+        }
+    }
+
+    // 分词处理
+    printf("Starting text processing...\n");
+    char* text_copy = (char*)malloc(strlen(analysis_data.text) + 1);
+    if (!text_copy) {
+        printf("Error: Memory allocation failed\n");
+        return;
+    }
+    strcpy(text_copy, analysis_data.text);
+
+    char* token = strtok(text_copy, DELIMS);
+    analysis_data.total_chars = 0;
+    analysis_data.word_count = 0;
+    analysis_data.filtered_word_count = 0;
+    analysis_data.total_words_filtered = 0;
+    analysis_data.original_word_count = 0;
+
+    // 收集所有原始词
+    while (token && analysis_data.original_word_count < MAX_WORDS) {
+        char clean_word[MAX_WORD_LENGTH];
+        strncpy(clean_word, token, MAX_WORD_LENGTH - 1);
+        clean_word[MAX_WORD_LENGTH - 1] = '\0';
+
+        // 去掉特殊前缀
+        if (clean_word[0] == '#' || clean_word[0] == '@') {
+            memmove(clean_word, clean_word + 1, strlen(clean_word));
+        }
+
+        // 小写化并过滤非ASCII
+        for (int i = 0; clean_word[i]; i++) {
+            unsigned char ch = (unsigned char)clean_word[i];
+            if (ch > 127) {
+                clean_word[i] = '\0';
+                break;
+            }
+            clean_word[i] = (char)tolower(ch);
+        }
+
+        // 对 original_word_list 应用变体处理
+        char* filtered_word = clean_word;
+        if (analysis_data.variant_processing_enabled) {
+            filtered_word = normalize_variant(clean_word);
+
+            // 如果变体映射为短语，拆分为多个词
+            if (strchr(filtered_word, ' ') != NULL && filtered_word != clean_word) {
+                char phrase_buf[MAX_WORD_LENGTH * 4];
+                strncpy(phrase_buf, filtered_word, sizeof(phrase_buf) - 1);
+                phrase_buf[sizeof(phrase_buf) - 1] = '\0';
+
+                char* part = strtok(phrase_buf, " ");
+                while (part && analysis_data.original_word_count < MAX_WORDS) {
+                    if (strlen(part) > 0) {
+                        strncpy(analysis_data.original_word_list[analysis_data.original_word_count],
+                            part, MAX_WORD_LENGTH - 1);
+                        analysis_data.original_word_list[analysis_data.original_word_count][MAX_WORD_LENGTH - 1] = '\0';
+                        analysis_data.original_word_count++;
+                    }
+                    part = strtok(NULL, " ");
+                }
+                continue; // 跳过下面的单个词添加
+            }
+        }
+
+        // 保存处理后的原始词（包含变体处理，但不排除停用词）
+        if (strlen(filtered_word) > 0) {
+            strncpy(analysis_data.original_word_list[analysis_data.original_word_count],
+                filtered_word, MAX_WORD_LENGTH - 1);
+            analysis_data.original_word_list[analysis_data.original_word_count][MAX_WORD_LENGTH - 1] = '\0';
+            analysis_data.original_word_count++;
+        }
+
+        token = strtok(NULL, DELIMS);
+    }
+
+    free(text_copy);
+
+    // 应用变体处理和过滤
+    reprocess_with_variants();
+
+    // 句子统计
+    analysis_data.sentences = 0;
+    int in_sentence = 0;
+    for (int i = 0; analysis_data.text[i] && i < MAX_TEXT_LENGTH; i++) {
+        if (analysis_data.text[i] == '.' || analysis_data.text[i] == '!' || analysis_data.text[i] == '?') {
+            if (in_sentence) { analysis_data.sentences++; in_sentence = 0; }
+            while (analysis_data.text[i + 1] == '.' || analysis_data.text[i + 1] == '!' || analysis_data.text[i + 1] == '?') i++;
+        }
+        else if (ISALPHA(analysis_data.text[i])) {
+            in_sentence = 1;
+        }
+    }
+    if (in_sentence) analysis_data.sentences++;
+    if (analysis_data.sentences == 0) analysis_data.sentences = 1;
+
+    analysis_data.text_filtered = true;
+
+    printf("Text processing completed successfully!\n");
+    printf("Original words: %d, Filtered words: %d, Sentences: %d\n",
+        analysis_data.total_words_original, analysis_data.total_words_filtered, analysis_data.sentences);
+}
+
+// ====== 分析功能函数 ======
+
+void word_analysis() {
+    if (analysis_data.text == NULL) {
+        printf("No file filtered. Use option 1 first.\n");
+        return;
+    }
+
+    printf("\n=== WORD ANALYSIS ===\n");
+    printf("File Analysed: %s\n", current_filename);
+    printf("Total words                   : %d\n", analysis_data.total_words_filtered);
+    printf("Unique words                  : %d\n", analysis_data.word_count);
+    printf("Total sentences detected      : %d\n", analysis_data.sentences);
+
+    if (analysis_data.sentences > 0) {
+        printf("Average sentence length       : %.1f words\n",
+            (float)analysis_data.total_words_filtered / analysis_data.sentences);
+    }
+    else {
+        printf("Average sentence length       : 0.0 words\n");
+    }
+
+    printf("Total character count         : %d\n", analysis_data.total_chars);
+
+    if (analysis_data.total_words_filtered > 0) {
+        printf("Average word length           : %.1f characters\n",
+            (float)analysis_data.total_chars / analysis_data.total_words_filtered);
+    }
+    else {
+        printf("Average word length           : 0.0 characters\n");
+    }
+
+    float lexical_diversity = 0.0;
+    if (analysis_data.total_words_filtered > 0) {
+        lexical_diversity = (float)analysis_data.word_count / analysis_data.total_words_filtered;
+    }
+    printf("Lexical Diversity             : %.3f", lexical_diversity);
+    if (lexical_diversity > 0.8) printf(" (High - Rich vocabulary)");
+    else if (lexical_diversity > 0.6) printf(" (Medium - Good variety)");
+    else if (lexical_diversity > 0.0) printf(" (Low - Repetitive vocabulary)");
+    else printf(" (No vocabulary data)");
+    printf("\n");
+    
+    printf("Stopwords filtered out        : %d\n", analysis_data.stopwords_removed);
+
+    if (analysis_data.variant_processing_enabled) {
+        printf("Text Normalisation            : ENABLED (expands abbreviations and Leet Speak)\n");
+    }
+    else {
+        printf("Text Normalisation            : DISABLED (uses original text forms)\n");
+    }
+
+    // 高频词显示
+    printf("\n--- TOP 10 FREQUENT WORDS ---\n");
+    if (analysis_data.word_count > 0) {
+        sort_by_frequency(analysis_data.words, analysis_data.word_count);
+        int n = (analysis_data.word_count < 10) ? analysis_data.word_count : 10;
+        for (int i = 0; i < n; i++) {
+            printf("%2d. %-15s (used %d times)\n",
+                i + 1, analysis_data.words[i].word, analysis_data.words[i].count);
+        }
+    }
+    else {
+        printf("No words available.\n");
+    }
+}
+
+// 自动保存过滤词列表（不显示提示）
+void save_filtered_word_list_auto(const char* filename) {
+    if (analysis_data.filtered_word_count == 0 || !analysis_data.text_filtered) {
+        return;
+    }
+
+    FILE* file = fopen(filename, "w");
+    if (file) {
+        for (int i = 0; i < analysis_data.filtered_word_count; i++) {
+            if (analysis_data.filtered_word_list[i] != NULL) {
+                fprintf(file, "%s\n", analysis_data.filtered_word_list[i]);
+            }
+        }
+        fclose(file);
+        // 静默保存，不显示消息
+    }
+}
+
+void save_filtered_word_list() {
+    if (analysis_data.text == NULL) {
+        printf("No file filtered. Use option 1 first.\n");
+        return;
+    }
+
+    char filename[256];
+    printf("Enter filename (or press Enter for 'filtered_words.txt'): ");
+    if (!read_line(filename, sizeof(filename))) {
+        printf("Failed to read filename.\n");
+        return;
+    }
+
+    if (strlen(filename) == 0) {
+        strcpy(filename, "filtered_words.txt");
+    }
+
+    if (strlen(filename) < 4 || strcmp(filename + strlen(filename) - 4, ".txt") != 0) {
+        strcat(filename, ".txt");
+    }
+
+    FILE* file = fopen(filename, "w");
+    if (file) {
+        for (int i = 0; i < analysis_data.filtered_word_count; i++) {
+            fprintf(file, "%s\n", analysis_data.filtered_word_list[i]);
+        }
+        fclose(file);
+
+        strncpy(current_manual_filtered_filename, filename,sizeof(current_manual_filtered_filename) - 1);
+        current_manual_filtered_filename[sizeof(current_manual_filtered_filename) - 1] = '\0';
+
+        // 设置手动保存标志
+        user_manually_saved_current_session = true;
+        printf("Filtered words saved to: %s (%d words)\n", filename, analysis_data.filtered_word_count);
+    }
+    else {
+        printf("Could not save to: %s\n", filename);
+    }
+}
+
+// ====== 工具函数 ======
+
+void sort_by_frequency(struct WordInfo words[], int count) {
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = 0; j < count - i - 1; j++) {
+            if (words[j].count < words[j + 1].count) {
+                struct WordInfo temp = words[j];
+                words[j] = words[j + 1];
+                words[j + 1] = temp;
+            }
+        }
+    }
+}
+
+void cleanup_analysis_data() {
+    if (analysis_data.text != NULL) {
+        free(analysis_data.text);
+        analysis_data.text = NULL;
+    }
+    if (analysis_data.words != NULL) {
+        free(analysis_data.words);
+        analysis_data.words = NULL;
+    }
+    if (analysis_data.filtered_word_list != NULL) {
+        for (int i = 0; i < MAX_WORDS; i++) {
+            if (analysis_data.filtered_word_list[i] != NULL) {
+                free(analysis_data.filtered_word_list[i]);
+            }
+        }
+        free(analysis_data.filtered_word_list);
+        analysis_data.filtered_word_list = NULL;
+    }
+    if (analysis_data.original_word_list != NULL) {
+        for (int i = 0; i < MAX_WORDS; i++) {
+            if (analysis_data.original_word_list[i] != NULL) {
+                free(analysis_data.original_word_list[i]);
+            }
+        }
+        free(analysis_data.original_word_list);
+        analysis_data.original_word_list = NULL;
+    }
+
+    //重置手动保存标志
+	user_manually_saved_current_session = false;
+
+    // 重置所有计数器
+    analysis_data.word_count = 0;
+    analysis_data.total_words_filtered = 0;
+    analysis_data.total_chars = 0;
+    analysis_data.sentences = 0;
+    analysis_data.stopwords_removed = 0;
+    analysis_data.total_words_original = 0;
+    analysis_data.filtered_word_count = 0;
+    analysis_data.original_word_count = 0;
+    analysis_data.text_filtered = false;
+
+    // 重置 Stage 3 相关计数器
+    analysis_data.total_toxic_occurrences = 0;
+    analysis_data.toxicity_density = 0.0;
+    analysis_data.bigram_toxic_occurrences = 0;
+    analysis_data.trigram_toxic_occurrences = 0;
+    memset(analysis_data.severity_count, 0, sizeof(analysis_data.severity_count));
+}
+
+// ====== 菜单函数 ======
+
+void display_main_menu() {
+    // Stage 2 实现 - 需要修改以包含Stage 3选项
+    char option;
+    do {
+        printf("\n=== MAIN MENU ===\n");
+        printf("1. Load and Process Text File\n");
+        printf("2. Text Analysis\n");
+        printf("3. Toxic Content Detection\n");
+        printf("4. Exit\n");
+        option = get_menu_option("1234", "Enter your option (1-4): ");
+
+        switch (option) {
+        case '1': {
+            char filename[256];
+            printf("Enter the text file path to analyse: ");
+            if (!read_line(filename, sizeof(filename))) {
+                printf("Failed to read file path.\n");
+            }
+            else {
+                process_text_file(filename);
+            }
+            break;
+        }
+        case '2':
+            if (analysis_data.text == NULL) {
+                printf("No file loaded. Please use option 1 first.\n");
+            }
+            else {
+                display_analysis_menu();
+            }
+            break;
+        case '3':
+            if (analysis_data.text == NULL) {
+                printf("No file loaded. Please use option 1 first.\n");
+            }
+            else {
+                display_toxic_menu();
+            }
+            break;
+        case '4':
+            printf("Exiting program...\n");
+            break;
+        default:
+            printf("Invalid option. Please enter 1-4.\n");
+        }
+    } while (option != '4');
+}
+
+void display_analysis_menu() {
+    char option;
+    do {
+        printf("\n=== TEXT ANALYSIS MENU ===\n");
+        printf("1 - Word Analysis\n");
+        printf("2 - Toggle Text Normalisation\n");
+        printf("3 - Save Filtered Word List\n");
+        printf("4 - Back to Main Menu\n");
+        option = get_menu_option("1234", "Enter your option (1-4): ");
+
+        switch (option) {
+        case '1':
+            word_analysis();
+            break;
+        case '2':
+            toggle_variant_processing();
+            break;
+        case '3':
+            save_filtered_word_list();
+            break;
+        case '4':
+            printf("Returning to main menu...\n");
+            break;
+        default:
+            printf("Invalid option. Please enter 1-4.\n");
+        }
+    } while (option != '4');
+}
+
+// ========== STAGE 2 函数实现结束 ==========
+
+// ========== STAGE 3 核心功能实现 ==========
+
+// 加载毒性数据
+void load_toxic_data(const char* filename) {
+    FILE* file = fopen(filename, "r");
+    if (!file) {
+        printf("Warning: Cannot open toxic data file: %s\n", filename);
+        return;
+    }
+
+    analysis_data.toxic_words_count = 0;
+    analysis_data.toxic_phrases_count = 0;
+    char line[256];
+
+    printf("Loading toxic data from %s...\n", filename);
+
+    while (fgets(line, sizeof(line), file)) {
+        // 去掉换行
+        line[strcspn(line, "\n")] = '\0';
+        line[strcspn(line, "\r")] = '\0';
+
+        if (strlen(line) == 0 || line[0] == '#') continue;
+
+        // 解析: word,severity
+        char* token = strtok(line, ",");
+        if (!token) continue;
+
+        char word[100];
+        strcpy(word, token);
+
+        token = strtok(NULL, ",");
+        if (!token) {
+            printf("Warning: Invalid line (no severity): %s\n", line);
+            continue;
+        }
+        int severity = atoi(token);
+        if (severity < 1 || severity > 5) severity = 3;
+
+        // 判断是否为 phrase
+        if (strchr(word, ' ') != NULL) {
+            if (analysis_data.toxic_phrases_count < MAX_PHRASES) {
+                int idx = analysis_data.toxic_phrases_count;
+
+                // 统计单词数
+                int len = 1;
+                for (char* p = word; *p; ++p) {
+                    if (*p == ' ') len++;
+                }
+
+                strncpy(analysis_data.toxic_phrases_list[idx].phrase,
+                    word, MAX_WORD_LENGTH * 3 - 1);
+                analysis_data.toxic_phrases_list[idx].phrase[MAX_WORD_LENGTH * 3 - 1] = '\0';
+
+                analysis_data.toxic_phrases_list[idx].severity = severity;
+                analysis_data.toxic_phrases_list[idx].frequency = 0;
+
+                if (len == 2 || len == 3) {
+                    analysis_data.toxic_phrases_list[idx].ngram_len = len;
+                }
+                else {
+                    analysis_data.toxic_phrases_list[idx].ngram_len = 0;
+                }
+
+                analysis_data.toxic_phrases_count++;
+            }
+        }
+        else {
+            // 单词
+            if (analysis_data.toxic_words_count < MAX_TOXIC_WORDS) {
+                int idx = analysis_data.toxic_words_count;
+                strncpy(analysis_data.toxic_words_list[idx].word,
+                    word, MAX_WORD_LENGTH - 1);
+                analysis_data.toxic_words_list[idx].word[MAX_WORD_LENGTH - 1] = '\0';
+                analysis_data.toxic_words_list[idx].severity = severity;
+                analysis_data.toxic_words_list[idx].frequency = 0;
+                analysis_data.toxic_words_count++;
+            }
+        }
+    }
+
+    fclose(file);
+    printf("Loaded %d toxic words and %d toxic phrases from %s\n",
+        analysis_data.toxic_words_count, analysis_data.toxic_phrases_count, filename);
+}
+
+// 不区分大小写的字符串比较
+int string_case_insensitive_compare(const char* s1, const char* s2) {
+    while (*s1 && *s2) {
+        if (tolower((unsigned char)*s1) != tolower((unsigned char)*s2)) {
+            return tolower((unsigned char)*s1) - tolower((unsigned char)*s2);
+        }
+        s1++;
+        s2++;
+    }
+    return tolower((unsigned char)*s1) - tolower((unsigned char)*s2);
+}
+
+// 检查文件是否存在
+bool file_exists(const char* filename) {
+    FILE* file = fopen(filename, "r");
+    if (file) {
+        fclose(file);
+        return true;
+    }
+    return false;
+}
+
+// 检查是否为有毒词汇
+int is_toxic_word(const char* word) {
+    for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+        if (string_case_insensitive_compare(word, analysis_data.toxic_words_list[i].word) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+// 获取毒性严重程度
+int get_toxic_severity(const char* word) {
+    for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+        if (string_case_insensitive_compare(word, analysis_data.toxic_words_list[i].word) == 0) {
+            return analysis_data.toxic_words_list[i].severity;
+        }
+    }
+    return 0;
+}
+
+// 检测毒性内容
+void detect_toxic_content(const char* word) {
+    if (is_toxic_word(word)) {
+        analysis_data.total_toxic_occurrences++;
+        int severity = get_toxic_severity(word);
+
+        // 更新毒性词汇频率
+        for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+            if (string_case_insensitive_compare(word, analysis_data.toxic_words_list[i].word) == 0) {
+                analysis_data.toxic_words_list[i].frequency++;
+                break;
+            }
+        }
+
+        // 更新严重程度统计
+        if (severity >= 1 && severity <= 5) {
+            analysis_data.severity_count[severity]++;
+        }
+    }
+}
+
+// 检测毒性短语
+void detect_toxic_phrases() {
+    if (analysis_data.original_word_count < 2) return;
+
+    for (int i = 0; i <= analysis_data.original_word_count - 2; i++) {
+
+        // ==== 2-gram ====
+        char phrase2[MAX_WORD_LENGTH * 3] = "";
+        strncat(phrase2, analysis_data.original_word_list[i], MAX_WORD_LENGTH);
+        strcat(phrase2, " ");
+        strncat(phrase2, analysis_data.original_word_list[i + 1], MAX_WORD_LENGTH);
+
+        for (int j = 0; j < analysis_data.toxic_phrases_count; j++) {
+            if (analysis_data.toxic_phrases_list[j].ngram_len != 2) continue;
+
+            if (string_case_insensitive_compare(phrase2,
+                analysis_data.toxic_phrases_list[j].phrase) == 0) {
+
+                char found_words[10][MAX_WORD_LENGTH];
+                int max_sev_in_phrase = 0;
+                int toxic_word_count = phrase_contains_toxic_words(
+                    analysis_data.toxic_phrases_list[j].phrase,
+                    found_words,
+                    10,
+                    &max_sev_in_phrase
+                );
+
+                if (toxic_word_count == 1) {
+                    // 不当作 phrase，只依靠 unigram 检测
+                    break;   // 结束当前 j 的循环，继续往下滑动窗口
+                }
+
+                int sev = analysis_data.toxic_phrases_list[j].severity;
+                if (sev < 1 || sev > 5) sev = 3;
+
+                analysis_data.toxic_phrases_list[j].frequency++;
+                analysis_data.total_toxic_occurrences++;
+                analysis_data.bigram_toxic_occurrences++;
+
+                if (sev >= 1 && sev <= 5) {
+                    analysis_data.severity_count[sev]++;
+                }
+                break;
+            }
+        }
+
+        // ==== 3-gram ====
+        if (i <= analysis_data.original_word_count - 3) {
+            char phrase3[MAX_WORD_LENGTH * 3] = "";
+            strncat(phrase3, analysis_data.original_word_list[i], MAX_WORD_LENGTH);
+            strcat(phrase3, " ");
+            strncat(phrase3, analysis_data.original_word_list[i + 1], MAX_WORD_LENGTH);
+            strcat(phrase3, " ");
+            strncat(phrase3, analysis_data.original_word_list[i + 2], MAX_WORD_LENGTH);
+
+            for (int j = 0; j < analysis_data.toxic_phrases_count; j++) {
+                if (analysis_data.toxic_phrases_list[j].ngram_len != 3) continue;
+
+                if (string_case_insensitive_compare(phrase3,
+                    analysis_data.toxic_phrases_list[j].phrase) == 0) {
+
+                    char found_words[10][MAX_WORD_LENGTH];
+                    int max_sev_in_phrase = 0;
+                    int toxic_word_count = phrase_contains_toxic_words(
+                        analysis_data.toxic_phrases_list[j].phrase,
+                        found_words,
+                        10,
+                        &max_sev_in_phrase
+                    );
+
+                    if (toxic_word_count == 1) {
+                        // 只含 1 个 toxic word → 不算 phrase
+                        break;
+                    }
+
+                    int sev = analysis_data.toxic_phrases_list[j].severity;
+                    if (sev < 1 || sev > 5) sev = 3;
+
+                    analysis_data.toxic_phrases_list[j].frequency++;
+                    analysis_data.total_toxic_occurrences++;
+                    analysis_data.trigram_toxic_occurrences++;
+
+                    if (sev >= 1 && sev <= 5) {
+                        analysis_data.severity_count[sev]++;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+
+// 检查短语是否包含毒性词汇
+int phrase_contains_toxic_words(const char* phrase,char found_words[][MAX_WORD_LENGTH],int max_found,int* max_severity) {
+    if (!phrase || !*phrase) return 0;
+
+    char phrase_copy[MAX_WORD_LENGTH * 3];
+    strcpy(phrase_copy, phrase);
+
+    int found_count = 0;
+    int local_max_sev = 0;
+
+    char* word = strtok(phrase_copy, " ");
+    while (word != NULL && found_count < max_found) {
+        if (is_toxic_word(word)) {
+            strcpy(found_words[found_count], word);
+            int sev = get_toxic_severity(word);
+            if (sev > local_max_sev) local_max_sev = sev;
+            found_count++;
+        }
+        word = strtok(NULL, " ");
+    }
+
+    if (max_severity) {
+        *max_severity = local_max_sev;
+    }
+    return found_count;
+}
+
+// 重置毒性计数
+void reset_toxic_counts() {
+    analysis_data.total_toxic_occurrences = 0;
+    analysis_data.toxicity_density = 0.0;
+    memset(analysis_data.severity_count, 0, sizeof(analysis_data.severity_count));
+    analysis_data.bigram_toxic_occurrences = 0;
+    analysis_data.trigram_toxic_occurrences = 0;
+
+    for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+        analysis_data.toxic_words_list[i].frequency = 0;
+    }
+    for (int i = 0; i < analysis_data.toxic_phrases_count; i++) {
+        analysis_data.toxic_phrases_list[i].frequency = 0;
+    }
+}
+
+// 计算毒性密度
+void calculate_toxicity_density() {
+    if (analysis_data.total_words_filtered > 0) {
+        analysis_data.toxicity_density = (float)analysis_data.total_toxic_occurrences /
+            analysis_data.total_words_filtered * 100;
+    }
+    else {
+        analysis_data.toxicity_density = 0.0;
+    }
+}
+
+// 运行毒性分析
+void run_toxic_analysis() {
+    if (!analysis_data.text_filtered) {
+        printf("No text filtered. Please load and process a file first.\n");
+        return;
+    }
+
+    char filename_to_use[256];
+    bool need_reprocess = false;
+
+    if (user_manually_saved_current_session) {
+        const char* manually_saved_filename =
+            strlen(current_manual_filtered_filename) > 0 ?
+            current_manual_filtered_filename :
+            "filtered_words.txt";
+
+        FILE* file = fopen(manually_saved_filename, "r");
+        bool saved_without_normalization = false;
+
+        if (file) {
+            char line[MAX_WORD_LENGTH];
+            int checked_lines = 0;
+            while (fgets(line, sizeof(line), file) && checked_lines < 10) {
+                line[strcspn(line, "\n")] = 0;
+                // 检查是否包含常见的未归一化形式
+                if (strcmp(line, "omg") == 0 || strcmp(line, "lol") == 0 ||
+                    strcmp(line, "btw") == 0 || strcmp(line, "ur") == 0 ||
+                    strcmp(line, "thx") == 0 || strcmp(line, "plz") == 0 ||
+                    strcmp(line, "u") == 0 || strcmp(line, "r") == 0) {
+                    saved_without_normalization = true;
+                    break;
+                }
+                checked_lines++;
+            }
+            fclose(file);
+        }
+
+        if (saved_without_normalization) {
+            printf("\nWARNING: You saved a filtered word list WITHOUT Text Normalization.\n");
+            printf("This means abbreviations and Leet Speak won't be expanded.\n");
+            printf("Examples in your file: 'omg', 'lol', 'btw' will remain as-is.\n");
+            printf("\nDo you want to:\n");
+            printf("1. Use the non-normalized file (faster, but less accurate)\n");
+            printf("2. Re-process with Text Normalization (recommended for better accuracy)\n");
+            printf("Enter your option (1-2): ");
+
+            char option;
+            scanf("%c", &option);
+            getchar();
+
+            if (option == '1') {
+                printf("\nUsing non-normalized file for analysis: %s\n", manually_saved_filename);
+                strcpy(filename_to_use, manually_saved_filename);
+            }
+            else {
+                printf("\nRe-processing with Text Normalization...\n");
+                if (!analysis_data.variant_processing_enabled) {
+                    analysis_data.variant_processing_enabled = true;
+                    need_reprocess = true;
+                }
+                strcpy(filename_to_use, "filtered_words_normalized.txt");
+            }
+        }
+        else {
+            printf("Using your manually saved file: %s\n", manually_saved_filename);
+            strcpy(filename_to_use, manually_saved_filename);
+        }
+    }
+    else {
+        // 用户没有手动保存 - 自动处理
+        printf("No manually saved filtered word list detected.\n");
+        printf("Auto-saving normalized word list for toxic analysis...\n");
+
+        // 确保使用最佳配置
+        if (!analysis_data.variant_processing_enabled) {
+            printf("Enabling Text Normalization for better accuracy...\n");
+            analysis_data.variant_processing_enabled = true;
+            need_reprocess = true;
+        }
+
+        strcpy(filename_to_use, "filtered_words_auto_saved.txt");
+    }
+
+    // 如果需要重新处理
+    if (need_reprocess) {
+        reprocess_with_variants();
+    }
+
+    // 自动保存当前状态的文件（如果使用的不是手动保存的文件）
+    if (!user_manually_saved_current_session || strcmp(filename_to_use, "filtered_words_normalized.txt") == 0) {
+        save_filtered_word_list_auto(filename_to_use);
+        printf("Auto-saved word list: %s\n", filename_to_use);
+    }
+
+    // 重置毒性计数并进行分析
+    reset_toxic_counts();
+    printf("Starting toxic analysis using: %s\n", filename_to_use);
+
+    // 从文件读取过滤词列表进行毒性分析
+    FILE* file = fopen(filename_to_use, "r");
+    if (!file) {
+        printf("Error: Cannot open filtered word list file: %s\n", filename_to_use);
+        return;
+    }
+
+    char word[MAX_WORD_LENGTH];
+    int word_count = 0;
+
+    while (fgets(word, sizeof(word), file) && word_count < MAX_WORDS) {
+        word[strcspn(word, "\n")] = 0;
+        word[strcspn(word, "\r")] = 0;
+
+        if (strlen(word) > 0) {
+            detect_toxic_content(word);
+            word_count++;
+        }
+    }
+    fclose(file);
+
+    printf("Analyzed %d words from file\n", word_count);
+
+    // 检测毒性短语（使用内存中的 original_word_list）
+    detect_toxic_phrases();
+
+    // 计算毒性密度
+    calculate_toxicity_density();
+
+    printf("Toxic analysis completed.\n");
+}
+
+// ========== STAGE 3 菜单功能实现 ==========
+
+// 基础毒性分析
+void toxic_analysis() {
+    printf("\n=== TOXIC CONTENT ANALYSIS ===\n");
+    printf("Analysing text for toxic content...\n");
+
+    // 自动运行毒性分析
+    run_toxic_analysis();
+
+    if (analysis_data.total_toxic_occurrences == 0) {
+        printf("No toxic content detected.\n");
+        return;
+    }
+
+    printf("\n--- TOXIC CONTENT SUMMARY ---\n");
+    printf("Total toxic words detected: %d\n", analysis_data.total_toxic_occurrences);
+    printf("Toxicity score: %.2f%% (%d toxic words out of %d total words detected)\n",
+        analysis_data.toxicity_density, analysis_data.total_toxic_occurrences,
+        analysis_data.total_words_filtered);
+
+    printf(" - From unigram dictionary   : %d detections\n",
+        analysis_data.total_toxic_occurrences
+        - analysis_data.bigram_toxic_occurrences
+        - analysis_data.trigram_toxic_occurrences);
+    printf(" - From toxic bigrams        : %d detections\n", analysis_data.bigram_toxic_occurrences);
+    printf(" - From toxic trigrams       : %d detections\n", analysis_data.trigram_toxic_occurrences);
+
+
+
+    // 显示严重程度分布 - 添加简单条形图
+    printf("\n--- SEVERITY DISTRIBUTION ---\n");
+    int max_count = 0;
+    for (int i = 1; i <= 5; i++) {
+        if (analysis_data.severity_count[i] > max_count) {
+            max_count = analysis_data.severity_count[i];
+        }
+    }
+
+    for (int i = 1; i <= 5; i++) {
+        if (analysis_data.severity_count[i] > 0) {
+            float percentage = (float)analysis_data.severity_count[i] / analysis_data.total_toxic_occurrences * 100;
+            int bar_length = max_count > 0 ? (analysis_data.severity_count[i] * 20 / max_count) : 0;
+
+            printf("Level %d: ", i);
+            for (int j = 0; j < bar_length; j++) printf("#");
+            printf(" %d words (%.1f%%)\n", analysis_data.severity_count[i], percentage);
+        }
+    }
+
+    // 显示毒性词汇表格 - 按频率排序
+    printf("\n--- TOXIC WORDS DETECTED ---\n");
+
+    // 创建临时数组用于排序
+    struct ToxicWord sorted_words[MAX_TOXIC_WORDS];
+    int valid_count = 0;
+
+    for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+        if (analysis_data.toxic_words_list[i].frequency > 0) {
+            sorted_words[valid_count] = analysis_data.toxic_words_list[i];
+            valid_count++;
+        }
+    }
+
+    // 按频率降序排序
+    for (int i = 0; i < valid_count - 1; i++) {
+        for (int j = 0; j < valid_count - i - 1; j++) {
+            if (sorted_words[j].frequency < sorted_words[j + 1].frequency) {
+                struct ToxicWord temp = sorted_words[j];
+                sorted_words[j] = sorted_words[j + 1];
+                sorted_words[j + 1] = temp;
+            }
+        }
+    }
+
+    if (valid_count > 0) {
+        printf("+-----------------+-----------+--------------+\n");
+        printf("| Word            | Frequency | Level (1-5)  |\n");
+        printf("+-----------------+-----------+--------------+\n");
+
+        for (int i = 0; i < valid_count; i++) {
+            // 计算频率数字的位数，用于居中显示
+            int freq = sorted_words[i].frequency;
+            int freq_digits = 0;
+            if (freq == 0) freq_digits = 1;
+            else {
+                int temp = freq;
+                while (temp > 0) {
+                    freq_digits++;
+                    temp /= 10;
+                }
+            }
+
+            // 计算前后空格数使频率居中（总宽度11个字符）
+            int total_spaces = 11 - freq_digits;
+            int spaces_before = total_spaces / 2;
+            int spaces_after = total_spaces - spaces_before;
+
+            printf("| %-15s |", sorted_words[i].word);
+
+            // 输出频率前的空格
+            for (int s = 0; s < spaces_before; s++) printf(" ");
+            // 输出频率数字
+            printf("%d", freq);
+            // 输出频率后的空格
+            for (int s = 0; s < spaces_after; s++) printf(" ");
+
+            printf("|      %d       |\n", sorted_words[i].severity);
+        }
+        printf("+-----------------+-----------+--------------+\n");
+    }
+    else {
+        printf("No toxic words found.\n");
+    }
+
+    // 显示毒性短语
+    printf("\n--- TOXIC PHRASES ---\n");
+    int phrase_found = 0;  // 这个变量用来标记是否至少找到了一个短语
+    int total_phrase_occurrences = 0;
+
+    // 首先计算总的短语出现次数
+    for (int i = 0; i < analysis_data.toxic_phrases_count; i++) {
+        if (analysis_data.toxic_phrases_list[i].frequency > 0) {
+            total_phrase_occurrences += analysis_data.toxic_phrases_list[i].frequency;
+        }
+    }
+
+    if (total_phrase_occurrences > 0) {
+        for (int i = 0; i < analysis_data.toxic_phrases_count; i++) {
+            if (analysis_data.toxic_phrases_list[i].frequency > 0) {
+
+                const char* phrase = analysis_data.toxic_phrases_list[i].phrase;
+                int freq = analysis_data.toxic_phrases_list[i].frequency;
+                int sev = analysis_data.toxic_phrases_list[i].severity;
+
+                printf("Detected phrase: %s\n", phrase);
+                printf("  Frequency: %d time(s)\n", freq);
+
+                // ✅ 用你已经写好的工具函数来检查短语里有没有 toxic words
+                char found_words[10][MAX_WORD_LENGTH];
+                int max_sev_in_phrase = 0;
+                int toxic_word_count = phrase_contains_toxic_words(
+                    phrase,
+                    found_words,
+                    10,
+                    &max_sev_in_phrase
+                );
+
+                if (toxic_word_count > 0) {
+                    printf("  Contains toxic word(s): ");
+                    for (int k = 0; k < toxic_word_count; k++) {
+                        if (k > 0) printf(", ");
+                        printf("%s", found_words[k]);
+                    }
+                    printf("\n");
+
+                    if (toxic_word_count >= 2) {
+                        // 真正的 A 类：包含 ≥2 个 toxic words 的多词短语
+                        printf("  Note: Multi-toxic phrase (contains %d toxic words, max severity %d)\n",
+                            toxic_word_count, max_sev_in_phrase);
+                    }
+                    else {
+                        // 按你新的规则：只有 1 个 toxic word 的 phrase 不再当成“特殊 A 类”
+                        // 一般来说在新版 detect_toxic_phrases() 逻辑下，这种 phrase 根本不会被计数，
+                        // 这里写一个更中性的说明，防止以后有人手动加了这种 phrase。
+                        printf("  Note: Phrase contains 1 toxic word (mainly handled by word-level detection)\n");
+                    }
+                }
+                else {
+                    // 真正“纯组合”的 B 类短语
+                    printf("  Context-based toxicity (combination of non-toxic words)\n");
+                }
+
+                printf("  Overall severity: Level %d\n\n", sev);
+                phrase_found = 1;
+
+            }
+        }
+    }
+    else {
+        printf("No toxic phrases detected.\n");
+    }
+
+}
+
+// 查看所有毒性词汇
+void view_all_toxic_words() {
+    printf("\n=== TOXIC DICTIONARY OVERVIEW ===\n");
+    printf("Total words: %d, Total phrases: %d\n\n",
+        analysis_data.toxic_words_count, analysis_data.toxic_phrases_count);
+
+    // 显示单词（分严重程度显示）
+    printf("TOXIC WORDS BY SEVERITY LEVEL:\n");
+    printf("-------------------------------\n");
+
+    for (int severity = 1; severity <= 5; severity++) {
+        printf("\nLevel %d:\n", severity);
+        int count = 0;
+        for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+            if (analysis_data.toxic_words_list[i].severity == severity) {
+                printf("%-15s", analysis_data.toxic_words_list[i].word);
+                count++;
+                if (count % 5 == 0) printf("\n"); // 每行显示5个单词
+            }
+        }
+        if (count % 5 != 0) printf("\n"); // 换行
+        printf("Total: %d words\n", count);
+    }
+
+    // 显示短语
+    printf("\nTOXIC PHRASES:\n");
+    printf("--------------\n");
+    int phrases_displayed = 0;
+    for (int i = 0; i < analysis_data.toxic_phrases_count; i++) {
+        // 检查短语是否包含已知毒性词汇
+        char found_toxic_words[10][MAX_WORD_LENGTH];
+        int toxic_word_count = phrase_contains_toxic_words(
+            analysis_data.toxic_phrases_list[i].phrase,
+            found_toxic_words,
+            10,
+            NULL   // 这里不需要 max severity
+        );
+
+
+        printf("%2d. %s (Level %d)",
+            i + 1,
+            analysis_data.toxic_phrases_list[i].phrase,
+            analysis_data.toxic_phrases_list[i].severity);
+
+        if (toxic_word_count > 0) {
+            printf(" - Contains: ");
+            for (int j = 0; j < toxic_word_count; j++) {
+                if (j > 0) printf(", ");
+                printf("%s", found_toxic_words[j]);
+            }
+        }
+        else {
+            printf(" - Combination toxicity");
+        }
+        printf("\n");
+        phrases_displayed++;
+    }
+    if (phrases_displayed == 0) {
+        printf("No toxic phrases in dictionary.\n");
+    }
+}
+
+// 词典管理
+void dictionary_management() {
+    char option;
+    do {
+        printf("\n=== TOXIC DICTIONARY MANAGEMENT ===\n");
+        printf("Current dictionary: %d words and %d phrases\n",
+            analysis_data.toxic_words_count, analysis_data.toxic_phrases_count);
+        printf("File: toxicwords.txt\n");
+
+        printf("\n1. Add new toxic word or phrase\n");
+        printf("2. Remove toxic word or phrase\n");
+        printf("3. View dictionary\n");
+        printf("4. Back to menu\n");
+        option = get_menu_option("1234", "Enter your option (1-4): ");
+
+        switch (option) {
+        case '1':
+            add_custom_toxic_word();
+            break;
+        case '2':
+            remove_toxic_word();
+            break;
+        case '3':
+            view_all_toxic_words();
+            break;
+        case '4':
+            printf("Returning to menu...\n");
+            break;
+        default:
+            printf("Invalid option. Please enter 1-4.\n");
+        }
+    } while (option != '4');
+}
+
+// 添加自定义毒性词
+void add_custom_toxic_word() {
+    if (analysis_data.toxic_words_count >= MAX_TOXIC_WORDS - 1) {
+        printf("Toxic words list is full!\n");
+        return;
+    }
+
+    char new_input[MAX_WORD_LENGTH * 3];
+    printf("Enter new toxic word or phrase: ");
+    if (!read_line(new_input, sizeof(new_input))) {
+        printf("Failed to read input.\n");
+        return;
+    }
+
+    // 全部转小写
+    char lower_input[MAX_WORD_LENGTH * 3];
+    strcpy(lower_input, new_input);
+    for (int i = 0; lower_input[i]; i++) {
+        lower_input[i] = (char)tolower((unsigned char)lower_input[i]);
+    }
+
+    // 判断是单词还是 phrase
+    if (strchr(lower_input, ' ') == NULL) {
+        // ===== 单词逻辑（和你原来类似） =====
+        // 检查是否已存在
+        for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+            if (string_case_insensitive_compare(lower_input,
+                analysis_data.toxic_words_list[i].word) == 0) {
+                printf("Word '%s' already exists in the dictionary.\n", new_input);
+                return;
+            }
+        }
+
+        int severity;
+        printf("Enter severity (Level 1-5): ");
+        scanf("%d", &severity);
+        getchar();
+        if (severity < 1 || severity > 5) {
+            printf("Invalid severity. Using Level 3 as default.\n");
+            severity = 3;
+        }
+
+        // 按字母顺序插入
+        int insert_pos = analysis_data.toxic_words_count;
+        for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+            if (string_case_insensitive_compare(lower_input,
+                analysis_data.toxic_words_list[i].word) < 0) {
+                insert_pos = i;
+                break;
+            }
+        }
+        for (int i = analysis_data.toxic_words_count; i > insert_pos; i--) {
+            analysis_data.toxic_words_list[i] = analysis_data.toxic_words_list[i - 1];
+        }
+
+        strcpy(analysis_data.toxic_words_list[insert_pos].word, lower_input);
+        analysis_data.toxic_words_list[insert_pos].severity = severity;
+        analysis_data.toxic_words_list[insert_pos].frequency = 0;
+        analysis_data.toxic_words_count++;
+
+        save_toxic_dictionary("toxicwords.txt");
+        printf("Added word '%s' with Level %d and saved to dictionary\n",
+            new_input, severity);
+    }
+    else {
+        // ===== phrase 逻辑 =====
+        add_custom_toxic_phrase(lower_input);
+    }
+}
+
+void add_custom_toxic_phrase(const char* phrase) {
+    if (analysis_data.toxic_phrases_count >= MAX_PHRASES) {
+        printf("Toxic phrase list is full!\n");
+        return;
+    }
+
+    // 拆分 phrase 成单词
+    char phrase_copy[MAX_WORD_LENGTH * 3];
+    strncpy(phrase_copy, phrase, sizeof(phrase_copy) - 1);
+    phrase_copy[sizeof(phrase_copy) - 1] = '\0';
+
+    char words[10][MAX_WORD_LENGTH];
+    int  word_count = 0;
+
+    char* tok = strtok(phrase_copy, " ");
+    while (tok && word_count < 10) {
+        strncpy(words[word_count], tok, MAX_WORD_LENGTH - 1);
+        words[word_count][MAX_WORD_LENGTH - 1] = '\0';
+        word_count++;
+        tok = strtok(NULL, " ");
+    }
+
+    if (word_count < 2) {
+        printf("Phrase should contain at least two words.\n");
+        return;
+    }
+
+    // 先查一遍哪些已经是 toxic word
+    int is_toxic[10] = { 0 };
+    int word_sev[10] = { 0 };
+    for (int i = 0; i < word_count; i++) {
+        int sev = get_toxic_severity(words[i]);
+        if (sev > 0) {
+            is_toxic[i] = 1;
+            word_sev[i] = sev;
+        }
+    }
+
+    // 展示 phrase 的每个单词 & 已有信息
+    printf("\nWords in phrase:\n");
+    for (int i = 0; i < word_count; i++) {
+        if (is_toxic[i]) {
+            printf("  %d) %s  (already toxic, Level %d)\n",
+                i + 1, words[i], word_sev[i]);
+        }
+        else {
+            printf("  %d) %s\n", i + 1, words[i]);
+        }
+    }
+
+    // 只问一次：让你选哪些位置是 toxic word（避免对 stopwords 一直 y/n）
+    int selected[10] = { 0 };
+    char line[128];
+
+    printf("\nWhich positions are TOXIC words? \n");
+    printf("Enter numbers separated by space (e.g. 2 3), or 0 if you don't want to add new toxic words:\n> ");
+
+    if (read_line(line, sizeof(line))) {
+        char* p = strtok(line, " ");
+        while (p) {
+            int idx = atoi(p);
+            if (idx == 0) {
+                // 0 表示“没有新的 toxic word”
+                break;
+            }
+            if (idx >= 1 && idx <= word_count) {
+                selected[idx - 1] = 1;
+            }
+            p = strtok(NULL, " ");
+        }
+    }
+
+    // 对“被你选中且现在还不是 toxic”的词，再问一次 severity
+    for (int i = 0; i < word_count; i++) {
+        if (selected[i] && !is_toxic[i]) {
+            int sev;
+            printf("Set severity for new toxic word '%s' (1-5): ", words[i]);
+            scanf("%d", &sev);
+            getchar();
+            if (sev < 1 || sev > 5) {
+                printf("  Invalid severity. Using Level 3.\n");
+                sev = 3;
+            }
+
+            // 加入 toxic words 字典
+            if (analysis_data.toxic_words_count < MAX_TOXIC_WORDS) {
+                int idx = analysis_data.toxic_words_count;
+                strcpy(analysis_data.toxic_words_list[idx].word, words[i]);
+                analysis_data.toxic_words_list[idx].severity = sev;
+                analysis_data.toxic_words_list[idx].frequency = 0;
+                analysis_data.toxic_words_count++;
+            }
+
+            is_toxic[i] = 1;
+            word_sev[i] = sev;
+        }
+    }
+
+    // 最后统计：phrase 里一共有多少 toxic word、最大 severity
+    int final_toxic_count = 0;
+    int final_max_sev = 0;
+    for (int i = 0; i < word_count; i++) {
+        int sev = get_toxic_severity(words[i]);
+        if (sev > 0) {
+            final_toxic_count++;
+            if (sev > final_max_sev) final_max_sev = sev;
+        }
+    }
+
+    int phrase_severity = 0;
+
+    if (final_toxic_count == 0) {
+        // ✅ 情况 A：完全“干净”的组合 → 纯 context-based phrase，问整句 severity，然后存进 phrase dictionary
+        printf("\nNo toxic words inside this phrase so far.\n");
+        printf("Set severity for the phrase '%s' (1-5): ", phrase);
+        scanf("%d", &phrase_severity);
+        getchar();
+        if (phrase_severity < 1 || phrase_severity > 5) {
+            printf("Invalid severity. Using Level 3.\n");
+            phrase_severity = 3;
+        }
+    }
+    else if (final_toxic_count == 1) {
+        // 情况：短语里只有 1 个 toxic word
+        // 按设定：不作为独立短语存入字典，只依靠这个单词本身进行检测
+        printf("\nThis phrase contains exactly ONE toxic word.\n");
+        printf("It will not be stored as a toxic phrase.\n");
+        printf("Toxic detection will rely on the toxic word itself only.\n");
+        return;  // 不写入 phrase 列表
+    }
+
+    else {
+        // ✅ 情况 C：有 2 个或以上 toxic words → 这是 multi-toxic phrase
+        phrase_severity = (final_max_sev > 0) ? final_max_sev : 3;
+        printf("\nPhrase contains %d toxic word(s). Phrase severity set to Level %d (max of words).\n",
+            final_toxic_count, phrase_severity);
+    }
+
+    // 只有情况 A 和 C 会走到这里：把 phrase 写入字典
+    if (analysis_data.toxic_phrases_count < MAX_PHRASES) {
+        int idx = analysis_data.toxic_phrases_count;
+
+        strncpy(analysis_data.toxic_phrases_list[idx].phrase,
+            phrase, MAX_WORD_LENGTH * 3 - 1);
+        analysis_data.toxic_phrases_list[idx].phrase[MAX_WORD_LENGTH * 3 - 1] = '\0';
+
+        analysis_data.toxic_phrases_list[idx].severity = phrase_severity;
+        analysis_data.toxic_phrases_list[idx].frequency = 0;
+
+        if (word_count == 2 || word_count == 3) {
+            analysis_data.toxic_phrases_list[idx].ngram_len = word_count;
+        }
+        else {
+            analysis_data.toxic_phrases_list[idx].ngram_len = 0;
+        }
+
+        analysis_data.toxic_phrases_count++;
+
+        save_toxic_dictionary("toxicwords.txt");
+        printf("Added phrase '%s' (severity: %d, words: %d, toxic_words: %d)\n",
+            phrase, phrase_severity, word_count, final_toxic_count);
+    }
+}
+
+// 移除毒性词
+void remove_toxic_word() {
+    // 用更大的 buffer，方便接收短语
+    char word_to_remove[MAX_WORD_LENGTH * 3];
+    printf("Enter toxic word or phrase to remove: ");
+    if (!read_line(word_to_remove, sizeof(word_to_remove))) {
+        printf("Failed to read input.\n");
+        return;
+    }
+
+    if (strlen(word_to_remove) == 0) {
+        printf("No input provided.\n");
+        return;
+    }
+
+    // 全部转小写，方便和字典里的内容对比
+    for (int i = 0; word_to_remove[i]; i++) {
+        word_to_remove[i] = (char)tolower((unsigned char)word_to_remove[i]);
+    }
+
+    bool removed = false;
+
+    // ① 优先在「单词」列表中查找
+    for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+        if (string_case_insensitive_compare(word_to_remove,
+            analysis_data.toxic_words_list[i].word) == 0) {
+
+            // 移除该单词：后面的元素往前挪
+            for (int j = i; j < analysis_data.toxic_words_count - 1; j++) {
+                analysis_data.toxic_words_list[j] = analysis_data.toxic_words_list[j + 1];
+            }
+            analysis_data.toxic_words_count--;
+            removed = true;
+
+            printf("Removed '%s' from toxic word list.\n", word_to_remove);
+            break;
+        }
+    }
+
+    // ② 如果没在 word 里找到，再在「短语」列表中查
+    if (!removed) {
+        for (int i = 0; i < analysis_data.toxic_phrases_count; i++) {
+            if (string_case_insensitive_compare(word_to_remove,
+                analysis_data.toxic_phrases_list[i].phrase) == 0) {
+
+                // 移除短语：同样把后面的往前挪
+                for (int j = i; j < analysis_data.toxic_phrases_count - 1; j++) {
+                    analysis_data.toxic_phrases_list[j] = analysis_data.toxic_phrases_list[j + 1];
+                }
+                analysis_data.toxic_phrases_count--;
+                removed = true;
+
+                printf("Removed '%s' from toxic phrase list.\n", word_to_remove);
+                break;
+            }
+        }
+    }
+
+    // ③ 如果两个列表都没找到
+    if (!removed) {
+        printf("'%s' not found in toxic word or phrase dictionary.\n", word_to_remove);
+        return;
+    }
+
+    // 有删到东西 → 自动保存
+    save_toxic_dictionary("toxicwords.txt");
+    printf("Dictionary file updated.\n");
+}
+
+// 保存毒性词典到文件
+void save_toxic_dictionary(const char* filename) {
+    FILE* file = fopen(filename, "w");
+    if (!file) {
+        printf("Error: Cannot save toxic dictionary to %s\n", filename);
+        return;
+    }
+
+    // 写入文件头
+    fprintf(file, "# Toxic Words Dictionary\n");
+    fprintf(file, "# Format: word,severity\n");
+    fprintf(file, "# Severity: 1-5 (1=mild, 5=severe)\n\n");
+
+    // 写入所有毒性词汇（包括自定义添加的）
+    for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+        fprintf(file, "%s,%d\n",
+            analysis_data.toxic_words_list[i].word,
+            analysis_data.toxic_words_list[i].severity);
+    }
+
+    // 写入毒性短语
+    for (int i = 0; i < analysis_data.toxic_phrases_count; i++) {
+        fprintf(file, "%s,%d\n",
+            analysis_data.toxic_phrases_list[i].phrase,
+            analysis_data.toxic_phrases_list[i].severity);
+    }
+
+    fclose(file);
+    printf("Toxic dictionary saved to: %s (%d words, %d phrases)\n",
+        filename, analysis_data.toxic_words_count, analysis_data.toxic_phrases_count);
+}
+
+// ========== STAGE 3 菜单显示函数 ==========
+
+// 毒性检测菜单
+void display_toxic_menu() {
+    char option;
+    do {
+        printf("\n=== TOXIC CONTENT DETECTION ===\n");
+        printf("1. Toxic Analysis\n");
+        printf("2. Dictionary Management\n");
+        printf("3. Back to Main Menu\n");
+        option = get_menu_option("123", "Enter your option (1-3): ");
+
+        switch (option) {
+        case '1':
+            toxic_analysis();
+            break;
+        case '2':
+            dictionary_management();
+            break;
+        case '3':
+            printf("Returning to main menu...\n");
+            break;
+        default:
+            printf("Invalid option. Please enter 1-3.\n");
+        }
+    } while (option != '3');
+}
