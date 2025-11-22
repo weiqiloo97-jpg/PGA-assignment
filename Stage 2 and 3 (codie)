@@ -102,7 +102,7 @@ void save_filtered_word_list();
 void sort_by_frequency(struct WordInfo words[], int count);
 void init_basic_variants();
 int load_variant_mappings(const char* filename);
-char* normalize_variant(char* word);
+char* normalise_variant(char* word);
 void toggle_variant_processing();
 void reprocess_with_variants();
 void add_token_to_analysis(const char* tok, int* removed_by_stopwords);
@@ -130,7 +130,7 @@ void view_all_toxic_words();
 void calculate_toxicity_density();
 void add_custom_toxic_word();
 void remove_toxic_word();
-int phrase_contains_toxic_words(const char* phrase,char found_words[][MAX_WORD_LENGTH],int max_found,int* max_severity);
+int phrase_contains_toxic_words(const char* phrase, char found_words[][MAX_WORD_LENGTH], int max_found, int* max_severity);
 void add_custom_toxic_phrase(const char* phrase);
 // ========== STAGE 3 函数声明结束 ==========
 
@@ -277,7 +277,7 @@ void init_basic_variants() {
     }
     // 从文件加载额外的映射
     int loaded = load_variant_mappings("variant_mappings.txt");
-    printf("Initialized %d core variants + loaded %d mappings from file (total %d, limit %d)\n",
+    printf("Initialised %d core variants + loaded %d mappings from file (total %d, limit %d)\n",
         num_core, loaded, analysis_data.variant_count, MAX_VARIANTS);;
 }
 
@@ -300,7 +300,7 @@ int load_variant_mappings(const char* filename) {
         line[strcspn(line, "\r")] = '\0';
 
         // 跳过表头行
-        if (is_first_line && (strstr(line, "Input Form") != NULL || strstr(line, "Normalized Form") != NULL)) {
+        if (is_first_line && (strstr(line, "Input Form") != NULL || strstr(line, "Normalised Form") != NULL)) {
             is_first_line = 0;
             continue;
         }
@@ -342,7 +342,7 @@ int load_variant_mappings(const char* filename) {
     return loaded;
 }
 
-char* normalize_variant(char* word) {
+char* normalise_variant(char* word) {
     if (!analysis_data.variant_processing_enabled) {
         return word;
     }
@@ -357,15 +357,15 @@ char* normalize_variant(char* word) {
 
 void toggle_variant_processing() {
     analysis_data.variant_processing_enabled = !analysis_data.variant_processing_enabled;
-    printf("\nText Normalization Processing is now %s\n",
+    printf("\nText Normalisation Processing is now %s\n",
         analysis_data.variant_processing_enabled ? "ENABLED" : "DISABLED");
 
-    printf("Loaded %d normalization mappings\n", analysis_data.variant_count);
+    printf("Loaded %d normalisation mappings\n", analysis_data.variant_count);
 
     // 显示从实际映射中抽取的示例
-    printf("\nSample text normalizations that will be applied:\n");
+    printf("\nSample text normalisations that will be applied:\n");
     printf("+-----------------+-----------------------+\n");
-    printf("| Input Form      | Normalized Form       |\n");
+    printf("| Input Form      | Normalised Form       |\n");
     printf("+-----------------+-----------------------+\n");
 
     // 分类收集示例
@@ -437,7 +437,7 @@ void toggle_variant_processing() {
     printf("+-----------------+-----------------------+\n");
 
     if (analysis_data.variant_processing_enabled) {
-        printf("Effect: Expands abbreviations and normalizes Leet Speak to standard vocabulary to improve analysis accuracy\n");
+        printf("Effect: Expands abbreviations and normalises Leet Speak to standard vocabulary to improve analysis accuracy\n");
         printf("      - Abbreviations expanded (e.g., 'u' becomes 'you')\n");
         printf("      - Leet Speak decoded (e.g., 'l33t' becomes 'leet')\n");
     }
@@ -534,7 +534,7 @@ void reprocess_with_variants() {
         memset(analysis_data.words, 0, MAX_WORDS * sizeof(struct WordInfo));
     }
 
-    int variants_normalized = 0;
+    int variants_normalised = 0;
     int removed_by_stopwords = 0;
     int considered_tokens = 0;
 
@@ -545,15 +545,15 @@ void reprocess_with_variants() {
         if (!*current_word) continue;
 
         // 应用变体映射（若启用）
-        char* normalized = normalize_variant(current_word);
+        char* normalised = normalise_variant(current_word);
 
-        if (normalized != current_word) {
-            variants_normalized++;
+        if (normalised != current_word) {
+            variants_normalised++;
 
             // 短语映射：拆分为多个词逐个处理
-            if (strchr(normalized, ' ') != NULL) {
+            if (strchr(normalised, ' ') != NULL) {
                 char phrase_buf[MAX_WORD_LENGTH * 4];
-                strncpy(phrase_buf, normalized, sizeof(phrase_buf) - 1);
+                strncpy(phrase_buf, normalised, sizeof(phrase_buf) - 1);
                 phrase_buf[sizeof(phrase_buf) - 1] = '\0';
 
                 char* part = strtok(phrase_buf, " ");
@@ -576,7 +576,7 @@ void reprocess_with_variants() {
             }
 
             // 单词映射
-            strncpy(current_word, normalized, MAX_WORD_LENGTH - 1);
+            strncpy(current_word, normalised, MAX_WORD_LENGTH - 1);
             current_word[MAX_WORD_LENGTH - 1] = '\0';
         }
 
@@ -598,8 +598,8 @@ void reprocess_with_variants() {
     analysis_data.stopwords_removed = considered_tokens - analysis_data.total_words_filtered;
 
     // 只在需要时打印变体扩展信息（现在由调用者控制）
-    if (analysis_data.variant_processing_enabled && variants_normalized > 0) {
-        printf("  - Text forms normalised: %d (abbreviations and Leet Speak)\n", variants_normalized);
+    if (analysis_data.variant_processing_enabled && variants_normalised > 0) {
+        printf("  - Text forms normalised: %d (abbreviations and Leet Speak)\n", variants_normalised);
     }
 }
 
@@ -759,7 +759,7 @@ void process_text_file(const char* filename) {
         // 对 original_word_list 应用变体处理
         char* filtered_word = clean_word;
         if (analysis_data.variant_processing_enabled) {
-            filtered_word = normalize_variant(clean_word);
+            filtered_word = normalise_variant(clean_word);
 
             // 如果变体映射为短语，拆分为多个词
             if (strchr(filtered_word, ' ') != NULL && filtered_word != clean_word) {
@@ -861,7 +861,7 @@ void word_analysis() {
     else if (lexical_diversity > 0.0) printf(" (Low - Repetitive vocabulary)");
     else printf(" (No vocabulary data)");
     printf("\n");
-    
+
     printf("Stopwords filtered out        : %d\n", analysis_data.stopwords_removed);
 
     if (analysis_data.variant_processing_enabled) {
@@ -927,12 +927,19 @@ void save_filtered_word_list() {
 
     FILE* file = fopen(filename, "w");
     if (file) {
+        // 记录保存时的Text Normalisation状态
+        if (analysis_data.variant_processing_enabled) {
+            fprintf(file, "# TextNormalisation: enabled\n");
+        }
+        else {
+            fprintf(file, "# TextNormalisation: disabled\n");
+        }
         for (int i = 0; i < analysis_data.filtered_word_count; i++) {
             fprintf(file, "%s\n", analysis_data.filtered_word_list[i]);
         }
         fclose(file);
 
-        strncpy(current_manual_filtered_filename, filename,sizeof(current_manual_filtered_filename) - 1);
+        strncpy(current_manual_filtered_filename, filename, sizeof(current_manual_filtered_filename) - 1);
         current_manual_filtered_filename[sizeof(current_manual_filtered_filename) - 1] = '\0';
 
         // 设置手动保存标志
@@ -987,7 +994,7 @@ void cleanup_analysis_data() {
     }
 
     //重置手动保存标志
-	user_manually_saved_current_session = false;
+    user_manually_saved_current_session = false;
 
     // 重置所有计数器
     analysis_data.word_count = 0;
@@ -1331,7 +1338,7 @@ void detect_toxic_phrases() {
 
 
 // 检查短语是否包含毒性词汇
-int phrase_contains_toxic_words(const char* phrase,char found_words[][MAX_WORD_LENGTH],int max_found,int* max_severity) {
+int phrase_contains_toxic_words(const char* phrase, char found_words[][MAX_WORD_LENGTH], int max_found, int* max_severity) {
     if (!phrase || !*phrase) return 0;
 
     char phrase_copy[MAX_WORD_LENGTH * 3];
@@ -1401,33 +1408,54 @@ void run_toxic_analysis() {
             "filtered_words.txt";
 
         FILE* file = fopen(manually_saved_filename, "r");
-        bool saved_without_normalization = false;
+        bool saved_without_normalisation = false;
+        bool found_metadata = false;
 
         if (file) {
             char line[MAX_WORD_LENGTH];
-            int checked_lines = 0;
-            while (fgets(line, sizeof(line), file) && checked_lines < 10) {
+            // 检查第一行是否有元数据
+            if (fgets(line, sizeof(line), file)) {
                 line[strcspn(line, "\n")] = 0;
-                // 检查是否包含常见的未归一化形式
-                if (strcmp(line, "omg") == 0 || strcmp(line, "lol") == 0 ||
-                    strcmp(line, "btw") == 0 || strcmp(line, "ur") == 0 ||
-                    strcmp(line, "thx") == 0 || strcmp(line, "plz") == 0 ||
-                    strcmp(line, "u") == 0 || strcmp(line, "r") == 0) {
-                    saved_without_normalization = true;
-                    break;
+                if (strstr(line, "# TextNormalisation: disabled") != NULL) {
+                    saved_without_normalisation = true;
+                    found_metadata = true;
                 }
-                checked_lines++;
+                else if (strstr(line, "# TextNormalisation: enabled") != NULL) {
+                    saved_without_normalisation = false;
+                    found_metadata = true;
+                }
+            }
+
+            // 如果没有元数据，使用备用检测方法
+            if (!found_metadata) {
+                rewind(file);
+                int checked_lines = 0;
+                while (fgets(line, sizeof(line), file) && checked_lines < 10) {
+                    line[strcspn(line, "\n")] = 0;
+                    // 跳过注释行
+                    if (line[0] == '#') continue;
+
+                    // 检查是否包含常见的未归一化形式
+                    if (strcmp(line, "omg") == 0 || strcmp(line, "lol") == 0 ||
+                        strcmp(line, "btw") == 0 || strcmp(line, "ur") == 0 ||
+                        strcmp(line, "thx") == 0 || strcmp(line, "plz") == 0 ||
+                        strcmp(line, "u") == 0 || strcmp(line, "r") == 0) {
+                        saved_without_normalisation = true;
+                        break;
+                    }
+                    checked_lines++;
+                }
             }
             fclose(file);
         }
 
-        if (saved_without_normalization) {
-            printf("\nWARNING: You saved a filtered word list WITHOUT Text Normalization.\n");
+        if (saved_without_normalisation) {
+            printf("\nWARNING: You saved a filtered word list WITHOUT Text Normalisation.\n");
             printf("This means abbreviations and Leet Speak won't be expanded.\n");
             printf("Examples in your file: 'omg', 'lol', 'btw' will remain as-is.\n");
             printf("\nDo you want to:\n");
-            printf("1. Use the non-normalized file (faster, but less accurate)\n");
-            printf("2. Re-process with Text Normalization (recommended for better accuracy)\n");
+            printf("1. Use the non-normalised file (faster, but less accurate)\n");
+            printf("2. Re-process with Text Normalisation (recommended for better accuracy)\n");
             printf("Enter your option (1-2): ");
 
             char option;
@@ -1435,16 +1463,16 @@ void run_toxic_analysis() {
             getchar();
 
             if (option == '1') {
-                printf("\nUsing non-normalized file for analysis: %s\n", manually_saved_filename);
+                printf("\nUsing non-normalised file for analysis: %s\n", manually_saved_filename);
                 strcpy(filename_to_use, manually_saved_filename);
             }
             else {
-                printf("\nRe-processing with Text Normalization...\n");
+                printf("\nRe-processing with Text Normalisation...\n");
                 if (!analysis_data.variant_processing_enabled) {
                     analysis_data.variant_processing_enabled = true;
                     need_reprocess = true;
                 }
-                strcpy(filename_to_use, "filtered_words_normalized.txt");
+                strcpy(filename_to_use, "filtered_words_normalised.txt");
             }
         }
         else {
@@ -1455,11 +1483,11 @@ void run_toxic_analysis() {
     else {
         // 用户没有手动保存 - 自动处理
         printf("No manually saved filtered word list detected.\n");
-        printf("Auto-saving normalized word list for toxic analysis...\n");
+        printf("Auto-saving normalised word list for toxic analysis...\n");
 
         // 确保使用最佳配置
         if (!analysis_data.variant_processing_enabled) {
-            printf("Enabling Text Normalization for better accuracy...\n");
+            printf("Enabling Text Normalisation for better accuracy...\n");
             analysis_data.variant_processing_enabled = true;
             need_reprocess = true;
         }
@@ -1473,7 +1501,7 @@ void run_toxic_analysis() {
     }
 
     // 自动保存当前状态的文件（如果使用的不是手动保存的文件）
-    if (!user_manually_saved_current_session || strcmp(filename_to_use, "filtered_words_normalized.txt") == 0) {
+    if (!user_manually_saved_current_session || strcmp(filename_to_use, "filtered_words_normalised.txt") == 0) {
         save_filtered_word_list_auto(filename_to_use);
         printf("Auto-saved word list: %s\n", filename_to_use);
     }
@@ -1503,7 +1531,7 @@ void run_toxic_analysis() {
     }
     fclose(file);
 
-    printf("Analyzed %d words from file\n", word_count);
+    printf("Analysed %d words from file\n", word_count);
 
     // 检测毒性短语（使用内存中的 original_word_list）
     detect_toxic_phrases();
@@ -1652,7 +1680,7 @@ void toxic_analysis() {
                 printf("Detected phrase: %s\n", phrase);
                 printf("  Frequency: %d time(s)\n", freq);
 
-                // ✅ 用你已经写好的工具函数来检查短语里有没有 toxic words
+                // 用已经写好的工具函数来检查短语里有没有 toxic words
                 char found_words[10][MAX_WORD_LENGTH];
                 int max_sev_in_phrase = 0;
                 int toxic_word_count = phrase_contains_toxic_words(
@@ -1676,7 +1704,7 @@ void toxic_analysis() {
                             toxic_word_count, max_sev_in_phrase);
                     }
                     else {
-                        // 按你新的规则：只有 1 个 toxic word 的 phrase 不再当成“特殊 A 类”
+                        // 只有 1 个 toxic word 的 phrase 不再当成“特殊 A 类”
                         // 一般来说在新版 detect_toxic_phrases() 逻辑下，这种 phrase 根本不会被计数，
                         // 这里写一个更中性的说明，防止以后有人手动加了这种 phrase。
                         printf("  Note: Phrase contains 1 toxic word (mainly handled by word-level detection)\n");
@@ -1818,7 +1846,7 @@ void add_custom_toxic_word() {
 
     // 判断是单词还是 phrase
     if (strchr(lower_input, ' ') == NULL) {
-        // ===== 单词逻辑（和你原来类似） =====
+        // ===== 单词逻辑 =====
         // 检查是否已存在
         for (int i = 0; i < analysis_data.toxic_words_count; i++) {
             if (string_case_insensitive_compare(lower_input,
@@ -1937,7 +1965,7 @@ void add_custom_toxic_phrase(const char* phrase) {
         }
     }
 
-    // 对“被你选中且现在还不是 toxic”的词，再问一次 severity
+    // 对“被选中且现在还不是 toxic”的词，再问一次 severity
     for (int i = 0; i < word_count; i++) {
         if (selected[i] && !is_toxic[i]) {
             int sev;
@@ -1977,7 +2005,7 @@ void add_custom_toxic_phrase(const char* phrase) {
     int phrase_severity = 0;
 
     if (final_toxic_count == 0) {
-        // ✅ 情况 A：完全“干净”的组合 → 纯 context-based phrase，问整句 severity，然后存进 phrase dictionary
+        // 情况 A：完全“干净”的组合 → 纯 context-based phrase，问整句 severity，然后存进 phrase dictionary
         printf("\nNo toxic words inside this phrase so far.\n");
         printf("Set severity for the phrase '%s' (1-5): ", phrase);
         scanf("%d", &phrase_severity);
@@ -1997,7 +2025,7 @@ void add_custom_toxic_phrase(const char* phrase) {
     }
 
     else {
-        // ✅ 情况 C：有 2 个或以上 toxic words → 这是 multi-toxic phrase
+        // 情况 C：有 2 个或以上 toxic words → 这是 multi-toxic phrase
         phrase_severity = (final_max_sev > 0) ? final_max_sev : 3;
         printf("\nPhrase contains %d toxic word(s). Phrase severity set to Level %d (max of words).\n",
             final_toxic_count, phrase_severity);
@@ -2051,7 +2079,7 @@ void remove_toxic_word() {
 
     bool removed = false;
 
-    // ① 优先在「单词」列表中查找
+    // 1.优先在「单词」列表中查找
     for (int i = 0; i < analysis_data.toxic_words_count; i++) {
         if (string_case_insensitive_compare(word_to_remove,
             analysis_data.toxic_words_list[i].word) == 0) {
@@ -2068,7 +2096,7 @@ void remove_toxic_word() {
         }
     }
 
-    // ② 如果没在 word 里找到，再在「短语」列表中查
+    // 2.如果没在 word 里找到，再在「短语」列表中查
     if (!removed) {
         for (int i = 0; i < analysis_data.toxic_phrases_count; i++) {
             if (string_case_insensitive_compare(word_to_remove,
@@ -2087,7 +2115,7 @@ void remove_toxic_word() {
         }
     }
 
-    // ③ 如果两个列表都没找到
+    // 3.如果两个列表都没找到
     if (!removed) {
         printf("'%s' not found in toxic word or phrase dictionary.\n", word_to_remove);
         return;
