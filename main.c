@@ -72,7 +72,7 @@ static inline double now_ms(void) {
 
 //全局默认排序设置与默认 Top N
 static SortKey g_key = KEY_FREQ_DESC;   // 默认按频率
-static SortAlg g_alg = ALG_QUICK;       // 默认快速排序
+static SortAlg g_alg = ALG_BUBBLE;       // 默认bubble
 static int     g_topN = 10;             // 默认Top N
 static int g_use_secondary_tiebreak = 1; // 1=使用二级键(现在的行为), 0=纯主键，制造ties观察稳定性
 static int g_use_file = 1; // 1=File1, 2=File2, 0=auto(现状)
@@ -220,7 +220,7 @@ bool isFileCorrupted(const char* filePath, const char* fileContent, size_t conte
             if (consecutiveWeird > maxConsecutiveWeird) {
                 maxConsecutiveWeird = consecutiveWeird;
             }
-            
+
             // Also count as control character for additional metrics
             controlChars++;
         }
@@ -232,8 +232,8 @@ bool isFileCorrupted(const char* filePath, const char* fileContent, size_t conte
     double controlCharRatio = (double)controlChars / totalChars;
     double wordDensity = (double)wordLikeSequences / (contentSize / 100.0);
 
-    printf("[i] File analysis: %zu chars, %.1f%% printable, %.1f%% weird, word density: %.1f/100chars\n", 
-           contentSize, printableRatio * 100, weirdRatio * 100, wordDensity);
+    printf("[i] File analysis: %zu chars, %.1f%% printable, %.1f%% weird, word density: %.1f/100chars\n",
+        contentSize, printableRatio * 100, weirdRatio * 100, wordDensity);
 
     // CORRUPTED FILE DETECTION - ONLY IF MORE THAN HALF IS WEIRD
     bool likelyCorrupted = false;
@@ -272,7 +272,7 @@ bool isFileCorrupted(const char* filePath, const char* fileContent, size_t conte
 
     // File is normal - can contain some weird characters but not too many
     printf("[✓] File is valid - contains %.1f%% weird characters (acceptable)\n", weirdRatio * 100);
-    
+
     // Show content preview
     if (contentSize > 0) {
         printf("Content preview: ");
@@ -281,15 +281,17 @@ bool isFileCorrupted(const char* filePath, const char* fileContent, size_t conte
             unsigned char c = (unsigned char)fileContent[i];
             if (c >= 32 && c <= 126) {
                 putchar(c);
-            } else if (c == '\t' || c == '\n' || c == '\r') {
+            }
+            else if (c == '\t' || c == '\n' || c == '\r') {
                 printf(" ");
-            } else {
+            }
+            else {
                 printf("?"); // Show ? for occasional weird chars
             }
         }
         printf("\n");
     }
-    
+
     return false; // file is normal
 }
 
@@ -1103,15 +1105,26 @@ void sort_and_show_topN_toxic(SortAlg alg, int topN) {
 }
 
 void compare_algorithms_topN(int topN) {
-    if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
-    char (*w)[50]; int wc; pick_tokens(&w, &wc);
-    if (!w || wc == 0) { printf("[!] No text loaded.\n"); return; }
+    if (!file1Loaded && !file2Loaded) {
+        printf("[!] No text loaded.\n");
+        return;
+    }
+    char (*w)[50]; int wc;
+    pick_tokens(&w, &wc);
+    if (!w || wc == 0) {
+        printf("[!] No text loaded.\n");
+        return;
+    }
 
     Pair* base = (Pair*)malloc(sizeof(Pair) * 6000);
-    Pair* a = (Pair*)malloc(sizeof(Pair) * 6000);
-    Pair* b = (Pair*)malloc(sizeof(Pair) * 6000);
-    Pair* c = (Pair*)malloc(sizeof(Pair) * 6000);
-    if (!base || !a || !b || !c) { printf("[!] OOM\n"); free(base); free(a); free(b); free(c); return; }
+    Pair* a = (Pair*)malloc(sizeof(Pair) * 6000);  // Bubble
+    Pair* b = (Pair*)malloc(sizeof(Pair) * 6000);  // Quick
+    Pair* c = (Pair*)malloc(sizeof(Pair) * 6000);  // Merge
+    if (!base || !a || !b || !c) {
+        printf("[!] OOM\n");
+        free(base); free(a); free(b); free(c);
+        return;
+    }
 
     int n = build_pairs_from_tokens(w, wc, base, 6000);
     memcpy(a, base, sizeof(Pair) * n);
@@ -1124,8 +1137,8 @@ void compare_algorithms_topN(int topN) {
     SortStats sB, sQ, sM;
 
     stats_reset(); sort_pairs(a, n, key, ALG_BUBBLE); sB = g_stats;
-    stats_reset(); sort_pairs(b, n, key, ALG_QUICK); sQ = g_stats;
-    stats_reset(); sort_pairs(c, n, key, ALG_MERGE); sM = g_stats;
+    stats_reset(); sort_pairs(b, n, key, ALG_QUICK);  sQ = g_stats;
+    stats_reset(); sort_pairs(c, n, key, ALG_MERGE);  sM = g_stats;
 
     if (topN > n) topN = n;
 
@@ -1133,32 +1146,49 @@ void compare_algorithms_topN(int topN) {
         key == KEY_FREQ_DESC ? "freq desc" : "A→Z",
         g_use_secondary_tiebreak ? "ON" : "OFF");
 
-    // 结果 TopN（可见“稳定/不稳定”导致顺序差异）
-    printf("-- Bubble --\n");
-    for (int i = 0; i < topN; i++) printf("%2d. %-20s %d\n", i + 1, a[i].word, a[i].count);
+    // ------- 三列排版：Bubble / Quick / Merge 并排显示 -------
+    printf("\n%-4s | %-20s %6s | %-20s %6s | %-20s %6s\n",
+        "Rank",
+        "Bubble", "count",
+        "Quick", "count",
+        "Merge", "count");
+    printf("------+---------------------------+---------------------------+---------------------------\n");
 
-    printf("-- Quick  --\n");
-    for (int i = 0; i < topN; i++) printf("%2d. %-20s %d\n", i + 1, b[i].word, b[i].count);
-
-    printf("-- Merge  --\n");
-    for (int i = 0; i < topN; i++) printf("%2d. %-20s %d\n", i + 1, c[i].word, c[i].count);
-
-    // 稳定性一致性检查
-    int agree = 1, cap = topN < 30 ? topN : 30;
-    for (int i = 0; i < cap; i++) {
-        if (strcmp(a[i].word, b[i].word) != 0 || strcmp(a[i].word, c[i].word) != 0) { agree = 0; break; }
+    for (int i = 0; i < topN; i++) {
+        printf("%-4d | %-20s %6d | %-20s %6d | %-20s %6d\n",
+            i + 1,
+            a[i].word, a[i].count,
+            b[i].word, b[i].count,
+            c[i].word, c[i].count);
     }
 
-    // ⬇️ 打印“性能对比表”
-    printf("\n[Stability] Top %d %s across algorithms.\n", cap, agree ? "ARE IDENTICAL" : "DIFFER");
-    printf("\n%-8s | %10s | %12s | %12s\n", "Alg", "Time(ms)", "Comparisons", "Moves");
+    // 稳定性一致性检查（看前 cap 个是否完全一样）
+    int agree = 1, cap = topN < 30 ? topN : 30;
+    for (int i = 0; i < cap; i++) {
+        if (strcmp(a[i].word, b[i].word) != 0 ||
+            strcmp(a[i].word, c[i].word) != 0) {
+            agree = 0;
+            break;
+        }
+    }
+
+    printf("\n[Stability] Top %d %s across algorithms.\n",
+        cap, agree ? "ARE IDENTICAL" : "DIFFER");
+
+    // ⬇️ 性能对比表（保持你原来的格式）
+    printf("\n%-8s | %10s | %12s | %12s\n",
+        "Alg", "Time(ms)", "Comparisons", "Moves");
     printf("----------+------------+--------------+--------------\n");
-    printf("%-8s | %10.3f | %12lld | %12lld\n", "Bubble", sB.ms, sB.comps, sB.moves);
-    printf("%-8s | %10.3f | %12lld | %12lld\n", "Quick", sQ.ms, sQ.comps, sQ.moves);
-    printf("%-8s | %10.3f | %12lld | %12lld\n", "Merge", sM.ms, sM.comps, sM.moves);
+    printf("%-8s | %10.3f | %12lld | %12lld\n",
+        "Bubble", sB.ms, sB.comps, sB.moves);
+    printf("%-8s | %10.3f | %12lld | %12lld\n",
+        "Quick", sQ.ms, sQ.comps, sQ.moves);
+    printf("%-8s | %10.3f | %12lld | %12lld\n",
+        "Merge", sM.ms, sM.comps, sM.moves);
 
     free(base); free(a); free(b); free(c);
 }
+
 
 void show_extra_summary(void) {
     if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
@@ -1196,22 +1226,96 @@ void show_extra_summary(void) {
 }
 
 void list_alpha_all(void) {
-    if (!file1Loaded && !file2Loaded) { printf("[!] No text loaded.\n"); return; }
-    char (*w)[50]; int wc; pick_tokens(&w, &wc);
-    if (!w || wc == 0) { printf("[!] No text loaded.\n"); return; }
+    if (!file1Loaded && !file2Loaded) {
+        printf("[!] No text loaded.\n");
+        return;
+    }
+
+    char (*w)[50];
+    int wc;
+    pick_tokens(&w, &wc);
+    if (!w || wc == 0) {
+        printf("[!] No text loaded.\n");
+        return;
+    }
 
     Pair* arr = (Pair*)malloc(sizeof(Pair) * 6000);
-    if (!arr) { printf("[!] OOM\n"); return; }
-    int n = build_pairs_from_tokens(w, wc, arr, 6000);
-    sort_pairs(arr, n, KEY_ALPHA, g_alg); // 用当前算法做字母序
+    if (!arr) {
+        printf("[!] OOM\n");
+        return;
+    }
 
-    int show = n < 200 ? n : 200;
-    printf("\n-- Alphabetical listing (first %d/%d) --\n", show, n);
-    for (int i = 0; i < show; i++) printf("%-20s %d\n", arr[i].word, arr[i].count);
-    if (n > 200) printf("... (%d more)\n", n - 200);
+    int n = build_pairs_from_tokens(w, wc, arr, 6000);
+    sort_pairs(arr, n, KEY_ALPHA, g_alg); // 按字母序排序
+
+    const int perPage = 50;  // 每页显示多少个词，可以自己改
+    int page = 0;            // 当前页，从 0 开始
+    char cmd[16];
+
+    for (;;) {
+        int start = page * perPage;
+        if (start >= n) {
+            printf("[i] No more words.\n");
+            break;
+        }
+        int end = start + perPage;
+        if (end > n) end = n;
+
+        printf("\n-- Alphabetical listing (words %d-%d of %d) --\n",
+            start + 1, end, n);
+        for (int i = start; i < end; ++i) {
+            printf("%-20s %d\n", arr[i].word, arr[i].count);
+        }
+
+        // 提示操作
+        if (page == 0 && end == n) {
+            printf("[Q]uit : ");
+        }
+        else if (page == 0) {
+            printf("[N]ext, [Q]uit : ");
+        }
+        else if (end == n) {
+            printf("[P]rev, [Q]uit : ");
+        }
+        else {
+            printf("[P]rev, [N]ext, [Q]uit : ");
+        }
+
+        if (!read_line(cmd, sizeof(cmd))) {
+            break;
+        }
+        // 空输入：什么都不做，重新问
+        if (cmd[0] == '\0') {
+            continue;
+        }
+
+        // 严格匹配：只接受单个字符 n / p / q（大小写都可以）
+        if (strcmp(cmd, "n") == 0 || strcmp(cmd, "N") == 0) {
+            if ((page + 1) * perPage >= n) {
+                printf("[i] Already at last page.\n");
+            }
+            else {
+                page++;
+            }
+        }
+        else if (strcmp(cmd, "p") == 0 || strcmp(cmd, "P") == 0) {
+            if (page == 0) {
+                printf("[i] Already at first page.\n");
+            }
+            else {
+                page--;
+            }
+        }
+        else if (strcmp(cmd, "q") == 0 || strcmp(cmd, "Q") == 0 || strcmp(cmd, "0") == 0) {
+            break;
+        }
+        else {
+            // 像 "npq"、"nn"、"x" 都会走到这里
+            printf("[i] Unknown command. Please use n / p / q.\n");
+        }
+    }
     free(arr);
 }
-
 
 // 把 tokens -> 唯一词频 Pair[]，返回唯一词个数
 static int build_pairs_from_tokens(char (*words)[50], int wordCount, Pair out[], int maxOut) {
@@ -1316,7 +1420,7 @@ void menu_sort_and_report(void) {
                 else g_alg = ALG_QUICK;
             }
         } break;
-        case 4: 
+        case 4:
             g_use_secondary_tiebreak = !g_use_secondary_tiebreak;
             printf("Secondary tiebreak is now %s\n",
                 g_use_secondary_tiebreak ? "ON" : "OFF");
