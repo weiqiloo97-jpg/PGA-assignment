@@ -83,6 +83,9 @@ struct AnalysisData analysis_data;
 char current_filename[256] = "";
 char current_manual_filtered_filename[256] = "";
 bool user_manually_saved_current_session = false;
+static int g_toxic_loaded = 0;
+static int g_toxic_count = 0;
+static char g_toxic[500][MAX_WORD_LENGTH];
 
 // -------- 全局变量（更新为支持多文件） --------
 char inputFilePath1[256];  // 文件1路径
@@ -173,6 +176,7 @@ void add_token_to_analysis(const char* tok, int* removed_by_stopwords);
 
 // ========== STAGE 3 函数声明 ==========
 void load_toxic_data(const char* filename);
+void sync_toxic_systems(void);
 int is_toxic_word(const char* word);
 int get_toxic_severity(const char* word);
 void detect_toxic_content(const char* word);
@@ -204,6 +208,7 @@ void displayToxicWordAnalysis();
 void sortAndDisplayTopNWords();
 void saveResultsToFile();
 void loadDictionaries();
+void reload_dictionaries();
 void handleError(const char* message);
 void displayNegativityScale();
 void displayWordOccurrence();
@@ -232,6 +237,7 @@ void show_extra_summary(void);
 void list_alpha_all(void);
 
 // ====== 主函数 ======
+// ====== 主函数 ======
 int main() {
     int userChoice;
 
@@ -239,9 +245,9 @@ int main() {
         printf("\n\nToxic Word Text Analyser Menu\n");
         printf("1. Load text file for analysis (e.g., enter text file path)\n");
         printf("2. Display general word statistics (e.g., word counts, frequencies)\n");
-        printf("3. Sort and Display top N words (e.g. by frequency or toxicity)\n");
-        printf("4. Advanced Text Analysis (with stopwords filtering)\n");
-        printf("5. Advanced Text Analysis with Variants (shortform decoding)\n");
+        printf("3. Advanced Text Analysis (with stopwords filtering)\n");
+        printf("4. Advanced Text Analysis with Variants (shortform decoding)\n");
+        printf("5. Sort and Display top N words (e.g. by frequency or toxicity)\n");
         printf("6. Save results to output file\n");
         printf("7. Exit system\n");
         printf("Enter a choice or type 7 to exit the system: ");
@@ -249,7 +255,7 @@ int main() {
         if (scanf("%d", &userChoice) != 1) {
             // 清理错误输入
             int c; while ((c = getchar()) != '\n' && c != EOF);
-            printf("Invalid input. Please enter a number 1-8!\n");
+            printf("Invalid input. Please enter a number 1-7!\n");
             continue;
         }
         // 吃掉行尾换行，方便后面用 read_line 读路径
@@ -264,14 +270,14 @@ int main() {
             displayGeneralStatistics();
             break;
         case 3:
-            menu_sort_and_report();
-            break;
-        case 4:
             advancedTextAnalysis();
             break;
 
-        case 5:
+        case 4:
             display_main_menu();
+            break;
+        case 5:
+            menu_sort_and_report();
             break;
         case 6:
             printf("Enter output file path (e.g., analysis_report.txt):\n> ");
@@ -287,7 +293,7 @@ int main() {
             return 0;
 
         default:
-            printf("%d is an invalid choice. Please enter a number between 1 and 8.\n", userChoice);
+            printf("%d is an invalid choice. Please enter a number between 1 and 7.\n", userChoice);
         }
     }
 
@@ -1229,6 +1235,21 @@ void display_analysis_menu() {
 
 // ========== STAGE 3 核心功能实现 ==========
 
+// Sync toxic words between Stage 3 and Stage 4 systems
+void sync_toxic_systems(void) {
+    // Reset Stage 4 system
+    g_toxic_count = 0;
+    g_toxic_loaded = 0;
+    
+    // Copy from Stage 3 to Stage 4
+    for (int i = 0; i < analysis_data.toxic_words_count && g_toxic_count < 500; i++) {
+        strcpy(g_toxic[g_toxic_count], analysis_data.toxic_words_list[i].word);
+        g_toxic_count++;
+    }
+    g_toxic_loaded = 1;
+    printf("[i] Synced %d toxic terms between systems\n", g_toxic_count);
+}
+
 // 加载毒性数据
 void load_toxic_data(const char* filename) {
     FILE* file = fopen(filename, "r");
@@ -1310,6 +1331,39 @@ void load_toxic_data(const char* filename) {
     fclose(file);
     printf("Loaded %d toxic words and %d toxic phrases from %s\n",
         analysis_data.toxic_words_count, analysis_data.toxic_phrases_count, filename);
+    sync_toxic_systems();
+}
+
+// ====== MERIT: Dynamic Dictionary Reloading ======
+void reload_dictionaries() {
+    printf("\n=== RELOAD DICTIONARIES ===\n");
+    
+    // Reload stopwords
+    int old_stop_count = analysis_data.stop_count;
+    analysis_data.stop_count = load_stopwords(analysis_data.stopwords);
+    printf("Stopwords: %d -> %d words\n", old_stop_count, analysis_data.stop_count);
+    
+    // Reload toxic words
+    int old_toxic_count = analysis_data.toxic_words_count;
+    int old_phrase_count = analysis_data.toxic_phrases_count;
+    
+    analysis_data.toxic_words_count = 0;
+    analysis_data.toxic_phrases_count = 0;
+    load_toxic_data("toxicwords.txt");
+    
+    printf("Toxic words: %d -> %d words\n", old_toxic_count, analysis_data.toxic_words_count);
+    printf("Toxic phrases: %d -> %d phrases\n", old_phrase_count, analysis_data.toxic_phrases_count);
+    
+    // Sync with Stage 4 system
+    sync_toxic_systems();
+    
+    printf("All dictionaries reloaded successfully!\n");
+    
+    // Reprocess text if we have loaded files
+    if (analysis_data.text_filtered) {
+        printf("Re-processing text with updated dictionaries...\n");
+        reprocess_with_variants();
+    }
 }
 
 // 不区分大小写的字符串比较
@@ -1335,12 +1389,22 @@ bool file_exists(const char* filename) {
 }
 
 // 检查是否为有毒词汇
+// Check if a word is toxic (works for both Stage 3 and Stage 4)
 int is_toxic_word(const char* word) {
+    // Check Stage 3 system first
     for (int i = 0; i < analysis_data.toxic_words_count; i++) {
         if (string_case_insensitive_compare(word, analysis_data.toxic_words_list[i].word) == 0) {
             return 1;
         }
     }
+    
+    // Also check Stage 4 system as backup
+    for (int i = 0; i < g_toxic_count; i++) {
+        if (string_case_insensitive_compare(word, g_toxic[i]) == 0) {
+            return 1;
+        }
+    }
+    
     return 0;
 }
 
@@ -2264,6 +2328,7 @@ void save_toxic_dictionary(const char* filename) {
     fclose(file);
     printf("Toxic dictionary saved to: %s (%d words, %d phrases)\n",
         filename, analysis_data.toxic_words_count, analysis_data.toxic_phrases_count);
+    sync_toxic_systems();
 }
 
 // ========== STAGE 3 菜单显示函数 ==========
@@ -2275,8 +2340,9 @@ void display_toxic_menu() {
         printf("\n=== TOXIC CONTENT DETECTION ===\n");
         printf("1. Toxic Analysis\n");
         printf("2. Dictionary Management\n");
-        printf("3. Back to Main Menu\n");
-        option = get_menu_option("123", "Enter your option (1-3): ");
+        printf("3. Reload Dictionaries (dynamic update)\n");
+        printf("4. Back to Main Menu\n");
+        option = get_menu_option("1234", "Enter your option (1-4): ");  // FIXED: "1234" instead of "123"
 
         switch (option) {
         case '1':
@@ -2285,13 +2351,16 @@ void display_toxic_menu() {
         case '2':
             dictionary_management();
             break;
-        case '3':
+        case '3':  // FIXED: Added space after 'case'
+            reload_dictionaries();
+            break;
+        case '4':
             printf("Returning to main menu...\n");
             break;
         default:
-            printf("Invalid option. Please enter 1-3.\n");
+            printf("Invalid option. Please enter 1-4.\n");
         }
-    } while (option != '3');
+    } while (option != '4');
 }
 
 // ====== 新增：通用小工具（直接可用）======
@@ -3361,10 +3430,6 @@ static int build_pairs_from_tokens(char (*words)[50], int wordCount, Pair out[],
     }
     return ucnt;
 }
-
-static int g_toxic_loaded = 0;
-static int g_toxic_count = 0;
-static char g_toxic[500][MAX_WORD_LENGTH];
 
 static int load_toxicwords(void) {
     if (g_toxic_loaded) return g_toxic_count;
