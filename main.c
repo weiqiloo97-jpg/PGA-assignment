@@ -2338,21 +2338,21 @@ void display_toxic_menu() {
     char option;
     do {
         printf("\n=== TOXIC CONTENT DETECTION ===\n");
-        printf("1. Toxic Analysis\n");
-        printf("2. Dictionary Management\n");
-        printf("3. Reload Dictionaries (dynamic update)\n");
+        printf("1. Dictionary Management\n");
+        printf("2. Reload Dictionaries (dynamic update)\n");
+        printf("3. Toxic Analysis\n");
         printf("4. Back to Main Menu\n");
-        option = get_menu_option("1234", "Enter your option (1-4): ");  // FIXED: "1234" instead of "123"
+        option = get_menu_option("1234", "Enter your option (1-4): ");
 
         switch (option) {
         case '1':
-            toxic_analysis();
-            break;
-        case '2':
             dictionary_management();
             break;
-        case '3':  // FIXED: Added space after 'case'
+        case '2':
             reload_dictionaries();
+            break;
+        case '3':
+            toxic_analysis();
             break;
         case '4':
             printf("Returning to main menu...\n");
@@ -3658,31 +3658,48 @@ void saveResultsToFile() {
         printf("[!] No text loaded. Use menu 1 first.\n");
         return;
     }
+    
     // 去引号再打开文件
     char path[512];
     strncpy(path, outputFilePath, sizeof(path) - 1);
     path[sizeof(path) - 1] = '\0';
     strip_quotes(path);
 
+    // Ensure CSV extension
+    char csv_path[512];
+    strncpy(csv_path, path, sizeof(csv_path) - 1);
+    csv_path[sizeof(csv_path) - 1] = '\0';
+    
+    // Replace or add .csv extension
+    char* dot = strrchr(csv_path, '.');
+    if (dot != NULL && (strcmp(dot, ".txt") == 0 || strcmp(dot, ".TXT") == 0)) {
+        strcpy(dot, ".csv");
+    } else if (dot == NULL) {
+        strcat(csv_path, ".csv");
+    }
+
 #ifdef _WIN32
-    FILE* f = fopen_u8(path, "w");
+    FILE* f = fopen_u8(csv_path, "w");
 #else
-    FILE* f = fopen(path, "w");
+    FILE* f = fopen(csv_path, "w");
 #endif
     if (!f) {
-        printf("[!] Error: Cannot create output file '%s'\n", path);
+        printf("[!] Error: Cannot create output file '%s'\n", csv_path);
         printf("Recovery Guide:\n");
         printf("1. Make sure the file name is valid\n");
         printf("2. Check if you have write permissions in the target directory\n");
         printf("3. Ensure the directory exists\n");
         printf("4. Try a simpler file name in the current directory\n");
-        printf("5. Examples: \"results.txt\", \"analysis_report.txt\"\n");
+        printf("5. Examples: \"results.csv\", \"analysis_report.csv\"\n");
         printf("6. Close the file if it's already open in another program\n");
         perror("Detailed error");
         handleError("Cannot open output file");
         return;
     }
 
+    // Load toxic words for analysis
+    load_toxicwords();
+    
     // Simplified processing: only save first file's data
     char (*words)[50] = words1;
     int wordCount = wordCount1;
@@ -3699,26 +3716,183 @@ void saveResultsToFile() {
         if (k == -1) { strcpy(uniq[ucnt], words[i]); freq[ucnt] = 1; ucnt++; }
         else { freq[k]++; }
     }
+    
+    // Sort by frequency descending, then alphabetically
     for (int i = 0; i < ucnt - 1; i++) {
-        for (int j = i + 1; j < ucnt; j++) {
-            if (freq[j] > freq[i] || (freq[j] == freq[i] && strcmp(uniq[j], uniq[i]) < 0)) {
-                int tf = freq[i]; freq[i] = freq[j]; freq[j] = tf;
-                char tmp[50]; strcpy(tmp, uniq[i]); strcpy(uniq[i], uniq[j]); strcpy(uniq[j], tmp);
+        for (int j = 0; j < ucnt - i - 1; j++) {
+            if (freq[j] < freq[j + 1] || (freq[j] == freq[j + 1] && strcmp(uniq[j], uniq[j + 1]) > 0)) {
+                int tf = freq[j]; freq[j] = freq[j + 1]; freq[j + 1] = tf;
+                char tmp[50]; strcpy(tmp, uniq[j]); strcpy(uniq[j], uniq[j + 1]); strcpy(uniq[j + 1], tmp);
             }
         }
     }
 
+    // ===== TOXIC WORDS ANALYSIS =====
+    int toxic_words_count = 0;
+    int total_toxic_occurrences = 0;
+    char toxic_words_list[500][50];
+    int toxic_freq[500] = {0};
+    int toxic_severity[500] = {0};
+    
+    // Analyze toxic words
+    for (int i = 0; i < ucnt; i++) {
+        if (is_toxic_word(uniq[i])) {
+            strcpy(toxic_words_list[toxic_words_count], uniq[i]);
+            toxic_freq[toxic_words_count] = freq[i];
+            toxic_severity[toxic_words_count] = get_toxic_severity(uniq[i]);
+            total_toxic_occurrences += freq[i];
+            toxic_words_count++;
+            if (toxic_words_count >= 500) break;
+        }
+    }
+    
+    // Sort toxic words by frequency descending
+    for (int i = 0; i < toxic_words_count - 1; i++) {
+        for (int j = 0; j < toxic_words_count - i - 1; j++) {
+            if (toxic_freq[j] < toxic_freq[j + 1]) {
+                // Swap frequency
+                int temp_freq = toxic_freq[j];
+                toxic_freq[j] = toxic_freq[j + 1];
+                toxic_freq[j + 1] = temp_freq;
+                
+                // Swap word
+                char temp_word[50];
+                strcpy(temp_word, toxic_words_list[j]);
+                strcpy(toxic_words_list[j], toxic_words_list[j + 1]);
+                strcpy(toxic_words_list[j + 1], temp_word);
+                
+                // Swap severity
+                int temp_sev = toxic_severity[j];
+                toxic_severity[j] = toxic_severity[j + 1];
+                toxic_severity[j + 1] = temp_sev;
+            }
+        }
+    }
+
+    // Write CSV header
     fprintf(f, "Text Analysis Report\n");
     fprintf(f, "====================\n");
-    fprintf(f, "Total tokens: %d\n", wordCount);
-    fprintf(f, "Unique words: %d\n\n", ucnt);
-    int topn = (ucnt < 10) ? ucnt : 10;
-    fprintf(f, "Top %d words:\n", topn);
-    for (int i = 0; i < topn; i++) {
-        fprintf(f, "%2d. %-20s %d\n", i + 1, uniq[i], freq[i]);
+    fprintf(f, "Metric,Value\n");
+    fprintf(f, "Total Tokens,%d\n", wordCount);
+    fprintf(f, "Unique Words,%d\n", ucnt);
+    fprintf(f, "Toxic Words Detected,%d\n", toxic_words_count);
+    fprintf(f, "Total Toxic Occurrences,%d\n", total_toxic_occurrences);
+    
+    if (wordCount > 0) {
+        float toxicity_percentage = (float)total_toxic_occurrences / wordCount * 100.0;
+        fprintf(f, "Toxicity Percentage,%.2f%%\n", toxicity_percentage);
+    } else {
+        fprintf(f, "Toxicity Percentage,0.00%%\n");
     }
+    fprintf(f, "\n");  // Empty line for separation
+    
+    // ===== TOXIC WORDS SECTION =====
+    if (toxic_words_count > 0) {
+        fprintf(f, "Toxic Words Analysis\n");
+        fprintf(f, "Rank,Toxic Word,Frequency,Severity Level,Percentage of Total Words\n");
+        
+        for (int i = 0; i < toxic_words_count; i++) {
+            float word_percentage = (float)toxic_freq[i] / wordCount * 100.0;
+            fprintf(f, "%d,%s,%d,%d,%.2f%%\n", 
+                   i + 1, 
+                   toxic_words_list[i], 
+                   toxic_freq[i], 
+                   toxic_severity[i],
+                   word_percentage);
+        }
+        fprintf(f, "\n");  // Empty line
+    } else {
+        fprintf(f, "Toxic Words Analysis\n");
+        fprintf(f, "No toxic words detected in the text\n");
+        fprintf(f, "\n");  // Empty line
+    }
+    
+    // ===== WORD FREQUENCY DISTRIBUTION =====
+    fprintf(f, "Word Frequency Distribution (Top 50)\n");
+    fprintf(f, "Rank,Word,Frequency,Percentage,Is Toxic\n");
+    
+    // Calculate total for percentages
+    int totalWords = wordCount;
+    
+    // Write word frequency data
+    int topn = (ucnt < 50) ? ucnt : 50;
+    for (int i = 0; i < topn; i++) {
+        float percentage = (float)freq[i] / totalWords * 100.0;
+        char is_toxic_flag[10] = "No";
+        if (is_toxic_word(uniq[i])) {
+            strcpy(is_toxic_flag, "Yes");
+        }
+        fprintf(f, "%d,%s,%d,%.2f%%,%s\n", i + 1, uniq[i], freq[i], percentage, is_toxic_flag);
+    }
+    
+    // ===== SUMMARY STATISTICS =====
+    fprintf(f, "\n");  // Empty line
+    fprintf(f, "Summary Statistics\n");
+    
+    // Calculate additional statistics
+    int singleOccurrence = 0;
+    int highFrequency = 0; // words appearing 10+ times
+    float avgFrequency = (float)totalWords / ucnt;
+    
+    for (int i = 0; i < ucnt; i++) {
+        if (freq[i] == 1) singleOccurrence++;
+        if (freq[i] >= 10) highFrequency++;
+    }
+    
+    fprintf(f, "Metric,Value\n");
+    fprintf(f, "Words with single occurrence,%d\n", singleOccurrence);
+    fprintf(f, "Words with 10+ occurrences,%d\n", highFrequency);
+    fprintf(f, "Average frequency per word,%.2f\n", avgFrequency);
+    fprintf(f, "Lexical diversity ratio,%.3f\n", (float)ucnt / totalWords);
+    
+    // Toxic-specific statistics
+    if (toxic_words_count > 0) {
+        fprintf(f, "Most frequent toxic word,%s (%d occurrences)\n", 
+               toxic_words_list[0], toxic_freq[0]);
+        fprintf(f, "Highest severity toxic word,");
+        
+        // Find highest severity word
+        int max_severity = 0;
+        char highest_sev_word[50] = "";
+        int highest_sev_freq = 0;
+        for (int i = 0; i < toxic_words_count; i++) {
+            if (toxic_severity[i] > max_severity) {
+                max_severity = toxic_severity[i];
+                strcpy(highest_sev_word, toxic_words_list[i]);
+                highest_sev_freq = toxic_freq[i];
+            }
+        }
+        fprintf(f, "%s (Level %d, %d occurrences)\n", highest_sev_word, max_severity, highest_sev_freq);
+    }
+    
+    // ===== FILE INFORMATION =====
+    fprintf(f, "\n");  // Empty line
+    fprintf(f, "File Information\n");
+    fprintf(f, "Metric,Value\n");
+    fprintf(f, "Source File,%s\n", inputFilePath1);
+    fprintf(f, "File Type,%s\n", isCSVFile(inputFilePath1) ? "CSV" : "Text");
+    fprintf(f, "Analysis Date,%s\n", __DATE__);
+    fprintf(f, "Toxic Dictionary Version,Loaded %d terms\n", g_toxic_count);
+    
     fclose(f);
-    printf("[✓] Saved report to %s\n", path);
+    
+    // Console output summary
+    printf("[✓] Saved comprehensive CSV report to %s\n", csv_path);
+    printf("[i] Report includes:\n");
+    printf("    - Toxic words analysis (%d toxic words found)\n", toxic_words_count);
+    printf("    - Word frequency distribution (top 50 words)\n");
+    printf("    - Summary statistics\n");
+    printf("    - File information\n");
+    
+    if (toxic_words_count > 0) {
+        printf("[!] Toxic content detected: %d occurrences (%.2f%% of text)\n", 
+               total_toxic_occurrences, 
+               (float)total_toxic_occurrences / wordCount * 100.0);
+        printf("    Most frequent toxic word: '%s' (%d times)\n", 
+               toxic_words_list[0], toxic_freq[0]);
+    } else {
+        printf("[✓] No toxic words detected in the analyzed text\n");
+    }
 }
 
 void loadDictionaries() {
