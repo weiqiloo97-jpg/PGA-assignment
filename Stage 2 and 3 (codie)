@@ -149,7 +149,6 @@ int main() {
 
     // 静默初始化基本变体映射
     init_basic_variants();
-    load_variant_mappings("variant_mappings.txt");
 
     // ========== STAGE 3 初始化 ==========
     load_toxic_data("toxicwords.txt");
@@ -1271,21 +1270,12 @@ void detect_toxic_phrases() {
                     &max_sev_in_phrase
                 );
 
-                if (toxic_word_count == 1) {
-                    // 不当作 phrase，只依靠 unigram 检测
-                    break;   // 结束当前 j 的循环，继续往下滑动窗口
-                }
-
                 int sev = analysis_data.toxic_phrases_list[j].severity;
                 if (sev < 1 || sev > 5) sev = 3;
 
                 analysis_data.toxic_phrases_list[j].frequency++;
-                analysis_data.total_toxic_occurrences++;
                 analysis_data.bigram_toxic_occurrences++;
 
-                if (sev >= 1 && sev <= 5) {
-                    analysis_data.severity_count[sev]++;
-                }
                 break;
             }
         }
@@ -1314,21 +1304,12 @@ void detect_toxic_phrases() {
                         &max_sev_in_phrase
                     );
 
-                    if (toxic_word_count == 1) {
-                        // 只含 1 个 toxic word → 不算 phrase
-                        break;
-                    }
-
                     int sev = analysis_data.toxic_phrases_list[j].severity;
                     if (sev < 1 || sev > 5) sev = 3;
 
                     analysis_data.toxic_phrases_list[j].frequency++;
-                    analysis_data.total_toxic_occurrences++;
                     analysis_data.trigram_toxic_occurrences++;
 
-                    if (sev >= 1 && sev <= 5) {
-                        analysis_data.severity_count[sev]++;
-                    }
                     break;
                 }
             }
@@ -1560,16 +1541,21 @@ void toxic_analysis() {
     printf("\n--- TOXIC CONTENT SUMMARY ---\n");
     printf("Total toxic words detected: %d\n", analysis_data.total_toxic_occurrences);
     printf("Toxicity score: %.2f%% (%d toxic words out of %d total words detected)\n",
-        analysis_data.toxicity_density, analysis_data.total_toxic_occurrences,
+        analysis_data.toxicity_density,
+        analysis_data.total_toxic_occurrences,
         analysis_data.total_words_filtered);
 
-    printf(" - From unigram dictionary   : %d detections\n",
-        analysis_data.total_toxic_occurrences
-        - analysis_data.bigram_toxic_occurrences
-        - analysis_data.trigram_toxic_occurrences);
-    printf(" - From toxic bigrams        : %d detections\n", analysis_data.bigram_toxic_occurrences);
-    printf(" - From toxic trigrams       : %d detections\n", analysis_data.trigram_toxic_occurrences);
+    // 全部 score 都按「word-level」算
+    printf(" - Word-level (single words) : %d detections\n",
+        analysis_data.total_toxic_occurrences);
 
+    // 短语只是额外信息，清楚说明不在总分里
+    printf(" - Toxic bigram matches      : %d detections (not counted in total)\n",
+        analysis_data.bigram_toxic_occurrences);
+    printf(" - Toxic trigram matches     : %d detections (not counted in total)\n",
+        analysis_data.trigram_toxic_occurrences);
+
+    printf("\nNote: Toxicity score and severity levels are based on single toxic words only.\n");
 
 
     // 显示严重程度分布 - 添加简单条形图
@@ -1658,11 +1644,11 @@ void toxic_analysis() {
     }
 
     // 显示毒性短语
-    printf("\n--- TOXIC PHRASES ---\n");
-    int phrase_found = 0;  // 这个变量用来标记是否至少找到了一个短语
+    printf("\n--- TOXIC PHRASES (patterns only) ---\n");
+    int phrase_found = 0;
     int total_phrase_occurrences = 0;
 
-    // 首先计算总的短语出现次数
+    // 先算所有短语的总出现次数
     for (int i = 0; i < analysis_data.toxic_phrases_count; i++) {
         if (analysis_data.toxic_phrases_list[i].frequency > 0) {
             total_phrase_occurrences += analysis_data.toxic_phrases_list[i].frequency;
@@ -1680,7 +1666,7 @@ void toxic_analysis() {
                 printf("Detected phrase: %s\n", phrase);
                 printf("  Frequency: %d time(s)\n", freq);
 
-                // 用已经写好的工具函数来检查短语里有没有 toxic words
+                // 用工具函数检查 phrase 里面有多少 toxic words
                 char found_words[10][MAX_WORD_LENGTH];
                 int max_sev_in_phrase = 0;
                 int toxic_word_count = phrase_contains_toxic_words(
@@ -1699,31 +1685,26 @@ void toxic_analysis() {
                     printf("\n");
 
                     if (toxic_word_count >= 2) {
-                        // 真正的 A 类：包含 ≥2 个 toxic words 的多词短语
+                        // 多个 toxic word 的固定搭配
                         printf("  Note: Multi-toxic phrase (contains %d toxic words, max severity %d)\n",
-                            toxic_word_count, max_sev_in_phrase);
-                    }
-                    else {
-                        // 只有 1 个 toxic word 的 phrase 不再当成“特殊 A 类”
-                        // 一般来说在新版 detect_toxic_phrases() 逻辑下，这种 phrase 根本不会被计数，
-                        // 这里写一个更中性的说明，防止以后有人手动加了这种 phrase。
-                        printf("  Note: Phrase contains 1 toxic word (mainly handled by word-level detection)\n");
+                            toxic_word_count,
+                            max_sev_in_phrase > 0 ? max_sev_in_phrase : sev);
                     }
                 }
                 else {
-                    // 真正“纯组合”的 B 类短语
+                    // 完全由 non-toxic words 组成，但组合起来有毒的 phrase
                     printf("  Context-based toxicity (combination of non-toxic words)\n");
                 }
 
                 printf("  Overall severity: Level %d\n\n", sev);
                 phrase_found = 1;
-
             }
         }
     }
     else {
         printf("No toxic phrases detected.\n");
     }
+
 
 }
 
