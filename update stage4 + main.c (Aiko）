@@ -259,6 +259,7 @@ void show_extra_summary(void);
 void list_alpha_all(void);
 
 int main() {
+    init_basic_variants();
     int userChoice;
 
     for (;;) {
@@ -539,58 +540,22 @@ void toggle_variant_processing_with_examples() {
     printf("\nCurrent Text Normalisation: %s\n",
         analysis_data.variant_processing_enabled ? "ENABLED" : "DISABLED");
 
-    // Show hardcoded examples in a table
+    // Show sample from real variant mappings
     printf("\n=== TEXT NORMALISATION EXAMPLES ===\n");
+    printf("Below are sample normalisation mappings used by the system:\n\n");
 
-    // Hardcoded examples - always show these
-    const char* examples[][2] = {
-        {"u", "you"},
-        {"ur", "your"},
-        {"r", "are"},
-        {"btw", "by the way"},
-        {"omg", "oh my god"},
-        {"lol", "laughing out loud"},
-        {"thx", "thanks"},
-        {"plz", "please"},
-        {"gr8", "great"},
-        {"2day", "today"}
-    };
-
-    int example_count = sizeof(examples) / sizeof(examples[0]);
-
-    // Display the examples in a nice table
-    printf("Examples of text normalization:\n");
     printf("+-----------------+-----------------------+\n");
-    printf("| Short Form      | Expanded To           |\n");
+    printf("| Input Form      | Normalised To         |\n");
     printf("+-----------------+-----------------------+\n");
 
-    for (int i = 0; i < example_count; i++) {
-        printf("| %-15s | %-21s |\n",
-            examples[i][0],
-            examples[i][1]);
+    int limit = (analysis_data.variant_count < 10) ? analysis_data.variant_count : 10;
+
+    for (int i = 0; i < limit; i++) {
+        printf("| %-15s | %-22s |\n", analysis_data.variant_mappings[i].variant, analysis_data.variant_mappings[i].standard);
     }
+
     printf("+-----------------+-----------------------+\n");
-
-    // Show a few of the actual mappings from the loaded file
-    if (analysis_data.variant_count > 0) {
-        printf("\nSample of available mappings:\n");
-        printf("+-----------------+-----------------------+\n");
-        printf("| Input Form      | Normalised Form       |\n");
-        printf("+-----------------+-----------------------+\n");
-
-        int mappings_shown = 0;
-        for (int i = 0; i < analysis_data.variant_count && mappings_shown < 8; i++) {
-            printf("| %-15s | %-21s |\n",
-                analysis_data.variant_mappings[i].variant,
-                analysis_data.variant_mappings[i].standard);
-            mappings_shown++;
-        }
-        printf("+-----------------+-----------------------+\n");
-
-        if (analysis_data.variant_count > 8) {
-            printf("... and %d more mappings available\n", analysis_data.variant_count - 8);
-        }
-    }
+    printf("(Showing %d of %d mappings loaded)\n", limit, analysis_data.variant_count);
 
     // Ask user if they want to toggle normalization
     printf("\nDo you want to %s text normalization? (y/n): ",
@@ -925,35 +890,10 @@ void process_text_file(const char* filename) {
             clean_word[i] = (char)tolower(ch);
         }
 
-        // 对 original_word_list 应用变体处理
-        char* filtered_word = clean_word;
-        if (analysis_data.variant_processing_enabled) {
-            filtered_word = normalise_variant(clean_word);
-
-            // 如果变体映射为短语，拆分为多个词
-            if (strchr(filtered_word, ' ') != NULL && filtered_word != clean_word) {
-                char phrase_buf[MAX_WORD_LENGTH * 4];
-                strncpy(phrase_buf, filtered_word, sizeof(phrase_buf) - 1);
-                phrase_buf[sizeof(phrase_buf) - 1] = '\0';
-
-                char* part = strtok(phrase_buf, " ");
-                while (part && analysis_data.original_word_count < MAX_WORDS) {
-                    if (strlen(part) > 0) {
-                        strncpy(analysis_data.original_word_list[analysis_data.original_word_count],
-                            part, MAX_WORD_LENGTH - 1);
-                        analysis_data.original_word_list[analysis_data.original_word_count][MAX_WORD_LENGTH - 1] = '\0';
-                        analysis_data.original_word_count++;
-                    }
-                    part = strtok(NULL, " ");
-                }
-                continue; // 跳过下面的单个词添加
-            }
-        }
-
         // 保存处理后的原始词（包含变体处理，但不排除停用词）
-        if (strlen(filtered_word) > 0) {
+        if (strlen(clean_word) > 0) {
             strncpy(analysis_data.original_word_list[analysis_data.original_word_count],
-                filtered_word, MAX_WORD_LENGTH - 1);
+                clean_word, MAX_WORD_LENGTH - 1);
             analysis_data.original_word_list[analysis_data.original_word_count][MAX_WORD_LENGTH - 1] = '\0';
             analysis_data.original_word_count++;
         }
@@ -1345,38 +1285,6 @@ void load_toxic_data(const char* filename) {
     sync_toxic_systems();   // 这里继续把 Stage 3 的表同步给 Stage 4 用
 }
 
-// ====== MERIT: Dynamic Dictionary Reloading ======
-void reload_dictionaries() {
-    printf("\n=== RELOAD DICTIONARIES ===\n");
-
-    // Reload stopwords
-    int old_stop_count = analysis_data.stop_count;
-    analysis_data.stop_count = load_stopwords(analysis_data.stopwords);
-    printf("Stopwords: %d -> %d words\n", old_stop_count, analysis_data.stop_count);
-
-    // Reload toxic words
-    int old_toxic_count = analysis_data.toxic_words_count;
-    int old_phrase_count = analysis_data.toxic_phrases_count;
-
-    analysis_data.toxic_words_count = 0;
-    analysis_data.toxic_phrases_count = 0;
-    load_toxic_data("toxicwords.txt");
-
-    printf("Toxic words: %d -> %d words\n", old_toxic_count, analysis_data.toxic_words_count);
-    printf("Toxic phrases: %d -> %d phrases\n", old_phrase_count, analysis_data.toxic_phrases_count);
-
-    // Sync with Stage 4 system
-    sync_toxic_systems();
-
-    printf("All dictionaries reloaded successfully!\n");
-
-    // Reprocess text if we have loaded files
-    if (analysis_data.text_filtered) {
-        printf("Re-processing text with updated dictionaries...\n");
-        reprocess_with_variants();
-    }
-}
-
 // 不区分大小写的字符串比较
 int string_case_insensitive_compare(const char* s1, const char* s2) {
     while (*s1 && *s2) {
@@ -1399,7 +1307,6 @@ bool file_exists(const char* filename) {
     return false;
 }
 
-// 检查是否为有毒词汇
 // Check if a word is toxic (works for both Stage 3 and Stage 4)
 int is_toxic_word(const char* word) {
     if (!word || !*word) return 0;
@@ -1756,6 +1663,11 @@ void run_toxic_analysis() {
 
 // 基础毒性分析
 void toxic_analysis() {
+    if (analysis_data.toxic_words_count == 0 && analysis_data.toxic_phrases_count == 0) {
+        printf("Loading toxic dictionary...\n");
+        load_toxic_data("toxicwords.txt");
+    }
+
     printf("\n=== TOXIC CONTENT ANALYSIS ===\n");
     printf("Detecting for toxic content...\n");
     run_toxic_analysis();
@@ -2366,29 +2278,25 @@ void display_toxic_menu() {
     char option;
     do {
         printf("\n=== TOXIC CONTENT DETECTION ===\n");
-        printf("1. Dictionary Management\n");
-        printf("2. Reload Dictionaries (with dynamic update)\n");
-        printf("3. Toxic Analysis\n");
-        printf("4. Back to Main Menu\n");
-        option = get_menu_option("1234", "Enter your option (1-4): ");
+        printf("1. Toxic Analysis\n");
+        printf("2. Dictionary Management\n");
+        printf("3. Back to Main Menu\n");
+        option = get_menu_option("123", "Enter your option (1-3): ");
 
         switch (option) {
         case '1':
-            dictionary_management();
-            break;
-        case '2':
-            reload_dictionaries();
-            break;
-        case '3':
             toxic_analysis();
             break;
-        case '4':
+        case '2':
+            dictionary_management();
+            break;
+        case '3':
             printf("Returning to main menu...\n");
             break;
         default:
-            printf("Invalid option. Please enter 1-4.\n");
+            printf("Invalid option. Please enter 1-3.\n");
         }
-    } while (option != '4');
+    } while (option != '3');
 }
 
 // ====== 新增：通用小工具（直接可用）======
@@ -3846,6 +3754,7 @@ static int partition_pairs(Pair a[], int l, int r, SortKey key) {
     swap_pair(&a[i + 1], &a[r]);
     return i + 1;
 }
+
 static void quick_sort_pairs(Pair a[], int l, int r, SortKey key) {
     if (l >= r) return;
     int p = partition_pairs(a, l, r, key);
