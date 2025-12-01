@@ -16,6 +16,7 @@
 #define MAX_TOXIC_WORDS 1000
 #define MAX_PHRASES 500
 #define MAX_TEXT_LENGTH_ADV 50000
+
 #define ISALPHA(c) isalpha((unsigned char)(c))
 #define TOLOWER(c) tolower((unsigned char)(c))
 
@@ -79,8 +80,22 @@ struct AnalysisData {
     // ========== STAGE 3 字段结束 ==========
 };
 
+//高级分析时使用，记录唯一词及其频次
+typedef enum { KEY_FREQ_DESC, KEY_ALPHA } SortKey;  //排序"键"（频率降序 / 字母序）
+typedef enum { ALG_BUBBLE, ALG_QUICK, ALG_MERGE } SortAlg;  //排序算法类型
+typedef struct {
+    char word[50];
+    int  count;
+} Pair;
+typedef struct {
+    long long comps;   // 比较次数
+    long long moves;   // 元素移动/交换次数
+    double    ms;      // 排序耗时(ms)
+} SortStats;
+
 // ====== 全局变量 ======
 struct AnalysisData analysis_data;
+//当前文件名
 char current_filename[256] = "";
 char current_manual_filtered_filename[256] = "";
 bool user_manually_saved_current_session = false;
@@ -88,7 +103,7 @@ static int g_toxic_loaded = 0;
 static int g_toxic_count = 0;
 static char g_toxic[500][MAX_WORD_LENGTH];
 
-// -------- 全局变量（更新为支持多文件） --------
+// 多文件支持
 char inputFilePath1[256];  // 文件1路径
 char inputFilePath2[256];  // 文件2路径
 char outputFilePath[256];
@@ -103,26 +118,18 @@ int  toxicCount = 0;       //留给stage3（还没做）
 bool file1Loaded = false;  // 文件1是否已加载
 bool file2Loaded = false;  // 文件2是否已加载
 
-//高级分析时使用，记录唯一词及其频次
-typedef enum { KEY_FREQ_DESC, KEY_ALPHA } SortKey;  //排序"键"（频率降序 / 字母序）
-typedef enum { ALG_BUBBLE, ALG_QUICK, ALG_MERGE } SortAlg;  //排序算法类型
-typedef struct {
-    char word[50];
-    int  count;
-} Pair;
-typedef struct {
-    long long comps;   // 比较次数
-    long long moves;   // 元素移动/交换次数
-    double    ms;      // 排序耗时(ms)
-} SortStats;
-
-static int cmp_pairs(const Pair* a, const Pair* b, SortKey key);
-static void pick_tokens(char (**out_words)[50], int* out_count);
+//全局默认排序设置与默认 Top N
 static SortStats g_stats;
+static SortKey g_key = KEY_FREQ_DESC;   // 默认按频率
+static SortAlg g_alg = ALG_BUBBLE;       // 默认bubble
+static int     g_topN = 10;             // 默认Top N
+static int g_use_secondary_tiebreak = 1; // 1=使用二级键(现在的行为), 0=纯主键，制造ties观察稳定性
+static int g_use_file = 1; // 1=File1, 2=File2
 
 static void stats_reset(void) { g_stats.comps = 0; g_stats.moves = 0; g_stats.ms = 0.0; }
 
 // 计比较
+static int cmp_pairs(const Pair* a, const Pair* b, SortKey key);
 static inline int cmp_with_stats(const Pair* a, const Pair* b, SortKey key) {
     g_stats.comps++;
     return cmp_pairs(a, b, key);
@@ -137,12 +144,7 @@ static inline double now_ms(void) {
     return 1000.0 * clock() / CLOCKS_PER_SEC;
 }
 
-//全局默认排序设置与默认 Top N
-static SortKey g_key = KEY_FREQ_DESC;   // 默认按频率
-static SortAlg g_alg = ALG_BUBBLE;       // 默认bubble
-static int     g_topN = 10;             // 默认Top N
-static int g_use_secondary_tiebreak = 1; // 1=使用二级键(现在的行为), 0=纯主键，制造ties观察稳定性
-static int g_use_file = 1; // 1=File1, 2=File2
+static void pick_tokens(char (**out_words)[50], int* out_count);
 
 static void trim_inplace(char* s) {
     // 去掉前后空白
@@ -2343,7 +2345,7 @@ void display_toxic_menu() {
         case 1:
             prompt_change_source_file();
             break;
-        case 2:
+        case 2: {
             const char* activePath = (g_use_file == 1)
                 ? inputFilePath1
                 : inputFilePath2;
@@ -2352,7 +2354,7 @@ void display_toxic_menu() {
                 (g_use_file == 1) ? "File 1" : "File 2",
                 activePath);
             toxic_analysis();
-            break;
+        }break;
         case 3:
             dictionary_management();
             break;
