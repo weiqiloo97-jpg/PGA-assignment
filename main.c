@@ -3202,6 +3202,10 @@ void handleFileMenu() {
             continue;
         }
 
+        if (strlen(subChoice)==0){
+            printf("[X] Error. Please load a file.\n");
+        }
+        
         if (strcmp(subChoice, "1.1") == 0) {
             printf("Enter file path for File 1 (supports .txt and .csv):\n> ");
             if (!read_line(inputFilePath1, sizeof(inputFilePath1))) {
