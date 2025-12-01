@@ -3204,6 +3204,7 @@ void handleFileMenu() {
 
         if (strlen(subChoice)==0){
             printf("[X] Error. Please load a file.\n");
+            continue;
         }
         
         if (strcmp(subChoice, "1.1") == 0) {
