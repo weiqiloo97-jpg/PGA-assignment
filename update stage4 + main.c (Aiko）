@@ -8,10 +8,10 @@
 #include <math.h>
 #include <time.h>
 
-#define MAX_WORDS 40000
+#define MAX_WORDS 3000000
 #define MAX_WORD_LENGTH 50
 #define MAX_STOPWORDS 500
-#define MAX_TEXT_LENGTH 200000
+#define MAX_TEXT_LENGTH 2000000
 #define MAX_VARIANTS 300
 #define MAX_TOXIC_WORDS 1000
 #define MAX_PHRASES 500
@@ -108,8 +108,8 @@ char inputFilePath1[256];  // 文件1路径
 char inputFilePath2[256];  // 文件2路径
 char outputFilePath[256];
 
-char words1[30000][50];     // 文件1的词表
-char words2[30000][50];     // 文件2的词表
+char words1[MAX_WORDS][50];     // 文件1的词表
+char words2[MAX_WORDS][50];     // 文件2的词表
 
 int  wordCount1 = 0;       // 文件1的词数
 int  wordCount2 = 0;       // 文件2的词数
@@ -957,10 +957,13 @@ void process_text_file(const char* filename) {
     printf("Text processing completed successfully!\n");
     printf("Original words: %d, Filtered words: %d, Sentences: %d\n",
         analysis_data.total_words_original, analysis_data.total_words_filtered, analysis_data.sentences);
+
+    // 清掉旧的手动保存状态
+    user_manually_saved_current_session = false;
+    current_manual_filtered_filename[0] = '\0';
 }
 
 // ====== 分析功能函数 ======
-
 void word_analysis() {
     if (analysis_data.text == NULL) {
         printf("No file filtered. Use option 1 first.\n");
@@ -1072,7 +1075,7 @@ void save_filtered_word_list() {
 
         // 记录保存时的 Text Normalisation 状态
         fprintf(file, "# TextNormalisation: %s\n", analysis_data.variant_processing_enabled ? "enabled" : "disabled");
-       
+
         for (int i = 0; i < analysis_data.filtered_word_count; i++) {
             fprintf(file, "%s\n", analysis_data.filtered_word_list[i]);
         }
@@ -1435,6 +1438,26 @@ void detect_toxic_content(const char* word) {
     }
 }
 
+int find_toxic_index(const char* word) {
+    for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+        if (string_case_insensitive_compare(word, analysis_data.toxic_words_list[i].word) == 0)
+            return i;
+    }
+    return -1;
+}
+
+void detect_toxic_content(const char* word) {
+    int idx = find_toxic_index(word);
+    if (idx < 0) return;
+
+    analysis_data.total_toxic_occurrences++;
+    analysis_data.toxic_words_list[idx].frequency++;
+
+    int sev = analysis_data.toxic_words_list[idx].severity;
+    if (sev >= 1 && sev <= 5) analysis_data.severity_count[sev]++;
+}
+
+
 // 检测毒性短语
 void detect_toxic_phrases() {
     if (analysis_data.original_word_count < 2) return;
@@ -1540,49 +1563,40 @@ void calculate_toxicity_density() {
 }
 
 // 运行毒性分析
-void run_toxic_analysis() {
+void run_toxic_analysis(void) {
+    // 必须先跑过 Stage 2
     if (!analysis_data.text_filtered) {
         printf("No text filtered. Please load and process a file first.\n");
         return;
     }
 
-    char filename_to_use[256];
+    char filename_to_use[256] = "";
     bool need_reprocess = false;
+    bool manual_source_match = false;
+    bool saved_without_normalisation = false;
 
-    bool manual_source_match = false;          // 手动文件是否属于当前 file
-    bool saved_without_normalisation = false;  // 手动文件是否在 NORMALISATION 关闭时保存
-    bool found_norm_metadata = false;
+    // 统一算出“手动文件名”
+    const char* manual_name =
+        (strlen(current_manual_filtered_filename) > 0)
+        ? current_manual_filtered_filename
+        : "filtered_words.txt";
 
-    // ===== 1) 解析手动保存的 filtered_words 文件头 =====
+    // ===== 1) 如果有手动保存过，先读头部元数据 =====
     if (user_manually_saved_current_session) {
-        const char* manually_saved_filename =
-            strlen(current_manual_filtered_filename) > 0 ?
-            current_manual_filtered_filename :
-            "filtered_words.txt";
-
-        FILE* file = fopen(manually_saved_filename, "r");
-        if (file) {
+        FILE* f = fopen(manual_name, "r");
+        if (f) {
             char line[512];
             char source_path[256] = "";
 
-            // 读取所有以 '#' 开头的元数据行
-            while (fgets(line, sizeof(line), file)) {
+            while (fgets(line, sizeof(line), f)) {
                 line[strcspn(line, "\r\n")] = 0;
+                if (line[0] != '#') break; // 到正文就停
 
-                if (line[0] != '#') {
-                    // 遇到正文行就停
-                    break;
-                }
-
-                if (strstr(line, "TextNormalisation: disabled") != NULL) {
+                if (strstr(line, "TextNormalisation: disabled"))
                     saved_without_normalisation = true;
-                    found_norm_metadata = true;
-                }
-                else if (strstr(line, "TextNormalisation: enabled") != NULL) {
+                else if (strstr(line, "TextNormalisation: enabled"))
                     saved_without_normalisation = false;
-                    found_norm_metadata = true;
-                }
-                else if (strncmp(line, "# SourceFile:", 13) == 0) {
+                else if (!strncmp(line, "# SourceFile:", 13)) {
                     const char* p = line + 13;
                     while (*p == ' ' || *p == '\t') p++;
                     strncpy(source_path, p, sizeof(source_path) - 1);
@@ -1590,62 +1604,32 @@ void run_toxic_analysis() {
                 }
             }
 
-            // 底层比对：这份 filtered list 是不是当前 file 跑出来的
-            if (source_path[0] != '\0' &&
-                current_filename[0] != '\0' &&
+            if (source_path[0] && current_filename[0] &&
                 strcmp(source_path, current_filename) == 0) {
                 manual_source_match = true;
             }
-
-            // 没 metadata，且确认是当前文件 → 用备选检测法
-            if (!found_norm_metadata && manual_source_match) {
-                rewind(file);
-                int checked_lines = 0;
-                while (fgets(line, sizeof(line), file) && checked_lines < 10) {
-                    line[strcspn(line, "\r\n")] = 0;
-                    if (line[0] == '#') continue;
-
-                    if (strcmp(line, "omg") == 0 || strcmp(line, "lol") == 0 ||
-                        strcmp(line, "btw") == 0 || strcmp(line, "ur") == 0 ||
-                        strcmp(line, "thx") == 0 || strcmp(line, "plz") == 0 ||
-                        strcmp(line, "u") == 0 || strcmp(line, "r") == 0) {
-                        saved_without_normalisation = true;
-                        break;
-                    }
-                    checked_lines++;
-                }
-            }
-
-            fclose(file);
+            fclose(f);
         }
     }
 
-    // 这次分析到底是不是在用「手动文件」
-    bool using_manual_file = (user_manually_saved_current_session && manual_source_match);
+    bool using_manual_file = user_manually_saved_current_session && manual_source_match;
 
-    // ===== 2) 选择要用哪个 filtered-word 文件 =====
+    // ===== 2) 决定用哪一个 filtered word 文件 =====
     if (using_manual_file) {
-        const char* manually_saved_filename =
-            strlen(current_manual_filtered_filename) > 0 ?
-            current_manual_filtered_filename :
-            "filtered_words.txt";
-
         if (saved_without_normalisation) {
-            printf("\nWARNING: You saved a filtered word list WITHOUT Text Normalisation.\n");
+            printf("\nWARNING: Your filtered word list was saved WITHOUT Text Normalisation.\n");
             printf("This means abbreviations and Leet Speak won't be expanded.\n");
-            printf("Examples in your file: 'omg', 'lol', 'btw' will remain as-is.\n");
-            printf("\nDo you want to:\n");
-            printf("1. Use the non-normalised file (faster, but less accurate)\n");
-            printf("2. Re-process with Text Normalisation (recommended for better accuracy)\n");
+            printf("Do you want to:\n");
+            printf("1. Use the non-normalised file (faster, less accurate)\n");
+            printf("2. Re-process with Text Normalisation (recommended)\n");
             printf("Enter your option (1-2): ");
 
             char option;
-            scanf("%c", &option);
-            getchar();
+            scanf(" %c", &option);   // 前面加空格吞掉残留的换行
 
             if (option == '1') {
-                printf("\nUsing non-normalised file for analysis: %s\n", manually_saved_filename);
-                strcpy(filename_to_use, manually_saved_filename);
+                printf("\nUsing non-normalised file for analysis: %s\n", manual_name);
+                strcpy(filename_to_use, manual_name);
             }
             else {
                 printf("\nRe-processing with Text Normalisation...\n");
@@ -1657,12 +1641,11 @@ void run_toxic_analysis() {
             }
         }
         else {
-            printf("Using your manually saved file: %s\n", manually_saved_filename);
-            strcpy(filename_to_use, manually_saved_filename);
+            printf("Using your manually saved file: %s\n", manual_name);
+            strcpy(filename_to_use, manual_name);
         }
     }
     else {
-        // ⭐ 要么没手动文件，要么那份手动文件是别的 file 的
         printf("No matching manually saved filtered word list for this file.\n");
         printf("Auto-saving normalised word list for toxic analysis...\n");
 
@@ -1671,26 +1654,22 @@ void run_toxic_analysis() {
             analysis_data.variant_processing_enabled = true;
             need_reprocess = true;
         }
-
         strcpy(filename_to_use, "filtered_words_auto_saved.txt");
     }
 
-    // ===== 3) 必要时重新跑 normalisation =====
+    // ===== 3) 必要时重新 normalise =====
     if (need_reprocess) {
         reprocess_with_variants();
     }
 
-    // ===== 4) 决定要不要把当前版本的 filtered list 写到磁盘 =====
-    //   - 如果这次不是用「手动文件」，就应该写
-    //   - 或者这次是「重新 normalise」出来的 special 文件
+    // ===== 4) 把当前版本的 filtered list 写到磁盘（自动文件） =====
     if (!using_manual_file ||
         strcmp(filename_to_use, "filtered_words_normalised.txt") == 0) {
-
         save_filtered_word_list_auto(filename_to_use);
         printf("Auto-saved word list: %s\n", filename_to_use);
     }
 
-    // ===== 5) 真正跑毒性分析 =====
+    // ===== 5) 真正做毒性分析 =====
     reset_toxic_counts();
     printf("Starting toxic analysis using: %s\n", filename_to_use);
 
@@ -1704,9 +1683,7 @@ void run_toxic_analysis() {
     int word_count = 0;
 
     while (fgets(word, sizeof(word), file) && word_count < MAX_WORDS) {
-        word[strcspn(word, "\n")] = 0;
-        word[strcspn(word, "\r")] = 0;
-
+        word[strcspn(word, "\r\n")] = 0;
         if (strlen(word) > 0) {
             detect_toxic_content(word);
             word_count++;
@@ -2640,18 +2617,18 @@ void loadTextFile(int fileNumber) {
             while (tok) {
                 size_t L = strlen(tok);
                 if (L > 0 && L < sizeof(targetWords[0])) {
-                    if (*targetWordCount < 30000) {
+                    if (*targetWordCount < MAX_WORDS) {
                         strcpy(targetWords[*targetWordCount], tok);
                         (*targetWordCount)++;
                     }
                     else {
-                        printf("[!] Warning: Reached maximum token limit (30000)\n");
+                        printf("[!] Warning: Reached maximum token limit.\n");
                         break;
                     }
                 }
                 tok = strtok(NULL, " \t\r\n");
             }
-            if (*targetWordCount >= 30000) break;
+            if (*targetWordCount >= MAX_WORDS) break;
         }
     }
     fclose(f);
@@ -3118,7 +3095,7 @@ void processCSVFile(FILE* f, char (*targetWords)[50], int* targetWordCount) {
 
     printf("Processing your CSV file...\n");
 
-    while (fgets(line, sizeof(line), f) && *targetWordCount < 30000) {
+    while (fgets(line, sizeof(line), f) && *targetWordCount < MAX_WORDS) {
         // 移除行尾换行符
         line[strcspn(line, "\n\r")] = '\0';
 
@@ -3131,7 +3108,7 @@ void processCSVFile(FILE* f, char (*targetWords)[50], int* targetWordCount) {
         }
 
         // 处理每一列
-        for (int i = 0; i < columnCount && *targetWordCount < 30000; i++) {
+        for (int i = 0; i < columnCount && *targetWordCount < MAX_WORDS; i++) {
             // 复制列内容到临时缓冲区
             char columnText[256];
             strncpy(columnText, columns[i], sizeof(columnText) - 1);
@@ -3142,7 +3119,7 @@ void processCSVFile(FILE* f, char (*targetWords)[50], int* targetWordCount) {
 
             // 分词处理
             char* word = strtok(columnText, " \t\r\n");
-            while (word != NULL && *targetWordCount < 30000) {
+            while (word != NULL && *targetWordCount < MAX_WORDS) {
                 size_t wordLen = strlen(word);
                 if (wordLen > 0 && wordLen < 50) {
                     strcpy(targetWords[*targetWordCount], word);
