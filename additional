@@ -265,3 +265,135 @@ void process_text_file(const char* filename) {
     printf("Original words: %d, Filtered words: %d, Sentences: %d\n",
         analysis_data.total_words_original, analysis_data.total_words_filtered, analysis_data.sentences);
 }
+
+void word_analysis() {
+    if (analysis_data.text == NULL) {
+        printf("No file filtered. Use option 1 first.\n");
+        return;
+    }
+
+    printf("\n=== WORD STATISTICS WITH ADVANCED ANALYSIS ===\n");
+    printf("File Analysed: %s\n", current_filename);
+    printf("Total words                   : %d\n", analysis_data.total_words_filtered);
+    printf("Unique words                  : %d\n", analysis_data.word_count);
+    printf("Total sentences detected      : %d\n", analysis_data.sentences);
+
+    if (analysis_data.sentences > 0) {
+        printf("Average sentence length       : %.1f words\n",
+            (float)analysis_data.total_words_filtered / analysis_data.sentences);
+    }
+    else {
+        printf("Average sentence length       : 0.0 words\n");
+    }
+
+    printf("Total character count         : %d\n", analysis_data.total_chars);
+
+    if (analysis_data.total_words_filtered > 0) {
+        printf("Average word length           : %.1f characters\n",
+            (float)analysis_data.total_chars / analysis_data.total_words_filtered);
+    }
+    else {
+        printf("Average word length           : 0.0 characters\n");
+    }
+
+    float lexical_diversity = 0.0;
+    if (analysis_data.total_words_filtered > 0) {
+        lexical_diversity = (float)analysis_data.word_count / analysis_data.total_words_filtered;
+    }
+    printf("Lexical Diversity             : %.3f", lexical_diversity);
+    if (lexical_diversity > 0.8) printf(" (High - Rich vocabulary)");
+    else if (lexical_diversity > 0.6) printf(" (Medium - Good variety)");
+    else if (lexical_diversity > 0.0) printf(" (Low - Repetitive vocabulary)");
+    else printf(" (No vocabulary data)");
+    printf("\n");
+
+    printf("Stopwords filtered out        : %d\n", analysis_data.stopwords_removed);
+
+    if (analysis_data.variant_processing_enabled) {
+        printf("Text Normalisation            : ENABLED (expands abbreviations and Leet Speak)\n");
+    }
+    else {
+        printf("Text Normalisation            : DISABLED (uses original text forms)\n");
+    }
+
+    // 高频词显示
+    printf("\n--- TOP 10 FREQUENT WORDS ---\n");
+    if (analysis_data.word_count > 0) {
+        sort_by_frequency(analysis_data.words, analysis_data.word_count);
+        int n = (analysis_data.word_count < 10) ? analysis_data.word_count : 10;
+        for (int i = 0; i < n; i++) {
+            printf("%2d. %-15s (used %d times)\n",
+                i + 1, analysis_data.words[i].word, analysis_data.words[i].count);
+        }
+    }
+    else {
+        printf("No words available.\n");
+    }
+}
+
+void display_advanced_analysis_menu() {
+    int sub = -1;
+    if (!auto_select_source_file()) {
+        return;
+    }
+    do {
+        printf("\n=== ADVANCED TEXT ANALYSIS MENU ===\n");
+        printf("1. Set source file (current: %s)\n",
+            (g_use_file == 1 ? "File 1" : "File 2"));
+        printf("2. Word Analysis\n");
+        printf("3. Text Normalisation (Toggle & View Examples)\n");
+        printf("4. Save Filtered Word List\n");
+        printf("0. Back\n");
+        printf("Select: ");
+
+        if (scanf("%d", &sub) != 1) {
+            int c;
+            while ((c = getchar()) != '\n' && c != EOF);
+            sub = -1;
+            continue;
+        }
+
+        int c;
+        while ((c = getchar()) != '\n' && c != EOF);
+
+        switch (sub) {
+        case 1:
+            prompt_change_source_file();
+            break;
+        case 2: {
+            const char* activePath = (g_use_file == 1)
+                ? inputFilePath1
+                : inputFilePath2;
+
+            printf("Processing %s: %s\n",
+                (g_use_file == 1) ? "File 1" : "File 2",
+                activePath);
+
+            process_text_file(activePath);
+            word_analysis();
+        } break;
+        case 3:
+            if (!analysis_data.text_filtered) {
+                printf("No analysis available. Please use option 2 first.\n");
+            }
+            else {
+                // Combined functionality: toggle + show examples
+                toggle_variant_processing();
+            }
+            break;
+        case 4:
+            if (!analysis_data.text_filtered) {
+                printf("No analysis available. Please use option 2 first.\n");
+            }
+            else {
+                save_filtered_word_list();
+            }
+            break;
+        case 0:
+            printf("Returning to main menu...\n");
+            break;
+        default:
+            printf("Invalid choice. Please enter 0-4.\n");
+        }
+    } while (sub != 0);
+}
