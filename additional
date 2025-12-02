@@ -397,3 +397,77 @@ void display_advanced_analysis_menu() {
         }
     } while (sub != 0);
 }
+
+void add_custom_toxic_word() {
+    if (analysis_data.toxic_words_count >= MAX_TOXIC_WORDS - 1) {
+        printf("Toxic words list is full!\n");
+        return;
+    }
+
+    char new_input[MAX_WORD_LENGTH * 3];
+    printf("Enter new toxic word or phrase: ");
+    if (!read_line(new_input, sizeof(new_input))) {
+        printf("Failed to read input.\n");
+        return;
+    }
+
+    // 全部转小写
+    char lower_input[MAX_WORD_LENGTH * 3];
+    strcpy(lower_input, new_input);
+    for (int i = 0; lower_input[i]; i++) {
+        lower_input[i] = (char)tolower((unsigned char)lower_input[i]);
+    }
+
+    int i = 0;
+    while (lower_input[i] && isspace((unsigned char)lower_input[i])) i++;
+    if (lower_input[i] == '\0') return;
+
+
+    // 判断是单词还是 phrase
+    if (strchr(lower_input, ' ') == NULL) {
+        // ===== 单词逻辑 =====
+        // 检查是否已存在
+        for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+            if (string_case_insensitive_compare(lower_input,
+                analysis_data.toxic_words_list[i].word) == 0) {
+                printf("Word '%s' already exists in the dictionary.\n", new_input);
+                return;
+            }
+        }
+
+        int severity;
+        printf("Enter severity (Level 1-5): ");
+        scanf("%d", &severity);
+        getchar();
+        if (severity < 1 || severity > 5) {
+            printf("Invalid severity. Using Level 3 as default.\n");
+            severity = 3;
+        }
+
+        // 按字母顺序插入
+        int insert_pos = analysis_data.toxic_words_count;
+        for (int i = 0; i < analysis_data.toxic_words_count; i++) {
+            if (string_case_insensitive_compare(lower_input,
+                analysis_data.toxic_words_list[i].word) < 0) {
+                insert_pos = i;
+                break;
+            }
+        }
+        for (int i = analysis_data.toxic_words_count; i > insert_pos; i--) {
+            analysis_data.toxic_words_list[i] = analysis_data.toxic_words_list[i - 1];
+        }
+
+        strcpy(analysis_data.toxic_words_list[insert_pos].word, lower_input);
+        analysis_data.toxic_words_list[insert_pos].severity = severity;
+        analysis_data.toxic_words_list[insert_pos].frequency = 0;
+        analysis_data.toxic_words_count++;
+
+        save_toxic_dictionary("toxicwords.txt");
+        printf("Added word '%s' with Level %d and saved to dictionary\n",
+            new_input, severity);
+    }
+    else {
+        // ===== phrase 逻辑 =====
+        add_custom_toxic_phrase(lower_input);
+    }
+}
