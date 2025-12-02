@@ -1,0 +1,267 @@
+void reprocess_with_variants() {
+    if (analysis_data.original_word_list == NULL) return;
+
+    // 重置统计
+    analysis_data.total_words_filtered = 0;
+    analysis_data.total_chars = 0;
+    analysis_data.word_count = 0;
+    analysis_data.filtered_word_count = 0;
+
+    if (analysis_data.words != NULL) {
+        memset(analysis_data.words, 0, MAX_WORDS * sizeof(struct WordInfo));
+    }
+
+    int variants_normalised = 0;
+    int removed_by_stopwords = 0;
+    int considered_tokens = 0;
+
+    for (int i = 0; i < analysis_data.original_word_count && analysis_data.filtered_word_count < MAX_WORDS; i++) {
+        char current_word[MAX_WORD_LENGTH];
+        strncpy(current_word, analysis_data.original_word_list[i], MAX_WORD_LENGTH - 1);
+        current_word[MAX_WORD_LENGTH - 1] = '\0';
+        if (!*current_word) continue;
+
+        // 应用变体映射（若启用）
+        char* normalised = normalise_variant(current_word);
+
+        if (normalised != current_word) {
+            variants_normalised++;
+
+            // 短语映射：拆分为多个词逐个处理
+            if (strchr(normalised, ' ') != NULL) {
+                char phrase_buf[MAX_WORD_LENGTH * 4];
+                strncpy(phrase_buf, normalised, sizeof(phrase_buf) - 1);
+                phrase_buf[sizeof(phrase_buf) - 1] = '\0';
+
+                char* part = strtok(phrase_buf, " ");
+                while (part && analysis_data.filtered_word_count < MAX_WORDS) {
+                    int has_letters = 0;
+                    for (int j = 0; part[j]; j++) {
+                        if (ISALPHA(part[j])) {
+                            has_letters = 1;
+                            break;
+                        }
+                    }
+
+                    if (*part && has_letters) {
+                        considered_tokens++;
+                        add_token_to_analysis(part, &removed_by_stopwords);
+                    }
+                    part = strtok(NULL, " ");
+                }
+                continue;
+            }
+
+            // 单词映射
+            strncpy(current_word, normalised, MAX_WORD_LENGTH - 1);
+            current_word[MAX_WORD_LENGTH - 1] = '\0';
+        }
+
+        // 检查是否包含字母
+        int has_letters = 0;
+        for (int j = 0; current_word[j]; j++) {
+            if (ISALPHA(current_word[j])) {
+                has_letters = 1;
+                break;
+            }
+        }
+
+        if (has_letters) {
+            considered_tokens++;
+            add_token_to_analysis(current_word, &removed_by_stopwords);
+        }
+    }
+
+    analysis_data.stopwords_removed = considered_tokens - analysis_data.total_words_filtered;
+
+    // 只在需要时打印变体扩展信息（现在由调用者控制）
+    if (analysis_data.variant_processing_enabled && variants_normalised > 0) {
+        printf("  - Text forms normalised: %d (abbreviations and Leet Speak)\n", variants_normalised);
+    }
+}
+
+// 分配 MAX_WORDS x MAX_WORD_LENGTH 的字符串表
+static int alloc_string_table(char*** table) {
+    if (*table != NULL) {
+        return 1;
+    }
+
+    *table = (char**)calloc(MAX_WORDS, sizeof(char*));
+    if (!*table) {
+        printf("Error: Memory allocation failed (table)\n");
+        return 0;
+    }
+
+    for (int i = 0; i < MAX_WORDS; i++) {
+        (*table)[i] = (char*)malloc(MAX_WORD_LENGTH);
+        if (!(*table)[i]) {
+            printf("Error: Memory allocation failed (row %d)\n", i);
+            // 回收已经分配的部分
+            for (int j = 0; j < i; j++) {
+                free((*table)[j]);
+            }
+            free(*table);
+            *table = NULL;
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static void fail_and_cleanup(FILE* f) {
+    if (f) fclose(f);
+    cleanup_analysis_data();
+}
+
+// 处理文本文件
+void process_text_file(const char* filename) {
+    // 先把 filename 复制到本地 buffer，然后做路径清理
+    char path_buf[256];
+    strncpy(path_buf, filename, sizeof(path_buf) - 1);
+    path_buf[sizeof(path_buf) - 1] = '\0';
+
+    // ⭐ 关键：清理路径（去掉引号、尾巴的奇怪字符）
+    clean_path(path_buf);
+
+    printf("\nProcessing file: %s\n", path_buf);
+    strncpy(current_filename, path_buf, sizeof(current_filename) - 1);
+    current_filename[sizeof(current_filename) - 1] = '\0';
+
+    // 清理旧数据
+    cleanup_analysis_data();
+
+    // 加载停用词
+    analysis_data.stop_count = load_stopwords(analysis_data.stopwords);
+    if (analysis_data.stop_count == 0) {
+        printf("Cannot continue without stopwords.\n");
+        return;
+    }
+
+    // 打开文件（注意这里用的是 path_buf，不是原来的 filename）
+    FILE* file = fopen(path_buf, "r");
+    if (file == NULL) {
+        printf("ERROR: Cannot open file: %s\n", path_buf);
+        return;
+    }
+
+    // 内存分配部分
+    analysis_data.text = (char*)malloc(MAX_TEXT_LENGTH);
+    if (!analysis_data.text) {
+        printf("Error: Memory allocation failed (text)\n");
+        fail_and_cleanup(file);
+        return;
+    }
+    memset(analysis_data.text, 0, MAX_TEXT_LENGTH);
+
+    analysis_data.words = (struct WordInfo*)calloc(MAX_WORDS, sizeof(struct WordInfo));
+    if (!analysis_data.words) {
+        printf("Error: Memory allocation failed (words)\n");
+        fail_and_cleanup(file);
+        return;
+    }
+
+    if (!alloc_string_table(&analysis_data.filtered_word_list)) {
+        fail_and_cleanup(file);
+        return;
+    }
+    if (!alloc_string_table(&analysis_data.original_word_list)) {
+        fail_and_cleanup(file);
+        return;
+    }
+
+    size_t used = 0;
+    analysis_data.total_words_original = 0;
+    char line[1000];
+
+    printf("Reading file content...\n");
+    while (fgets(line, sizeof(line), file)) {
+        size_t len = strlen(line);
+        if (used + len + 1 >= MAX_TEXT_LENGTH) break;
+        memcpy(analysis_data.text + used, line, len);
+        used += len;
+        analysis_data.text[used] = '\0';
+    }
+    fclose(file);
+
+    // 处理非ASCII字符
+    for (size_t i = 0; analysis_data.text[i]; ++i) {
+        unsigned char ch = (unsigned char)analysis_data.text[i];
+        if (ch > 127) analysis_data.text[i] = ' ';
+    }
+
+    if (analysis_data.text[0] == '\0') {
+        printf("ERROR: No content read from file\n");
+        return;
+    }
+
+    // 分词处理
+    printf("Starting text processing...\n");
+    char* text_copy = (char*)malloc(strlen(analysis_data.text) + 1);
+    if (!text_copy) {
+        printf("Error: Memory allocation failed\n");
+        return;
+    }
+    strcpy(text_copy, analysis_data.text);
+
+    char* token = strtok(text_copy, DELIMS);
+    analysis_data.total_chars = 0;
+    analysis_data.word_count = 0;
+    analysis_data.filtered_word_count = 0;
+    analysis_data.total_words_filtered = 0;
+    analysis_data.original_word_count = 0;
+
+    // 收集所有原始词
+    while (token && analysis_data.original_word_count < MAX_WORDS) {
+        char clean_word[MAX_WORD_LENGTH];
+        strncpy(clean_word, token, MAX_WORD_LENGTH - 1);
+        clean_word[MAX_WORD_LENGTH - 1] = '\0';
+
+        // 去掉特殊前缀
+        if (clean_word[0] == '#' || clean_word[0] == '@') {
+            memmove(clean_word, clean_word + 1, strlen(clean_word));
+        }
+
+        // 小写化并过滤非ASCII
+        for (int i = 0; clean_word[i]; i++) {
+            clean_word[i] = (char)tolower((unsigned char)clean_word[i]);
+        }
+
+        // 保存处理后的原始词（包含变体处理，但不排除停用词）
+        if (strlen(clean_word) > 0) {
+            strncpy(analysis_data.original_word_list[analysis_data.original_word_count],
+                clean_word, MAX_WORD_LENGTH - 1);
+            analysis_data.original_word_list[analysis_data.original_word_count][MAX_WORD_LENGTH - 1] = '\0';
+            analysis_data.original_word_count++;
+            analysis_data.total_words_original++;
+        }
+
+        token = strtok(NULL, DELIMS);
+    }
+
+    free(text_copy);
+
+    // 应用变体处理和过滤
+    reprocess_with_variants();
+    printf("File reading completed. Total words in file: %d\n", analysis_data.total_words_original);
+
+    // 句子统计
+    analysis_data.sentences = 0;
+    int in_sentence = 0;
+    for (int i = 0; analysis_data.text[i] && i < MAX_TEXT_LENGTH; i++) {
+        if (analysis_data.text[i] == '.' || analysis_data.text[i] == '!' || analysis_data.text[i] == '?') {
+            if (in_sentence) { analysis_data.sentences++; in_sentence = 0; }
+            while (analysis_data.text[i + 1] == '.' || analysis_data.text[i + 1] == '!' || analysis_data.text[i + 1] == '?') i++;
+        }
+        else if (ISALPHA(analysis_data.text[i])) {
+            in_sentence = 1;
+        }
+    }
+    if (in_sentence) analysis_data.sentences++;
+    if (analysis_data.sentences == 0) analysis_data.sentences = 1;
+
+    analysis_data.text_filtered = true;
+
+    printf("Text processing completed successfully!\n");
+    printf("Original words: %d, Filtered words: %d, Sentences: %d\n",
+        analysis_data.total_words_original, analysis_data.total_words_filtered, analysis_data.sentences);
+}
