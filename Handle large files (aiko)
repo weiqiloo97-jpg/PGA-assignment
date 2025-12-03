@@ -2956,7 +2956,7 @@ void saveResultsToFile(void) {
         return;
     }
 
-    // 根据当前状态自动选一个有效 source（File1 / File2）
+    // Automatically select a valid active source (File 1 / File 2) based on current state.
     if (!auto_select_source_file()) {
         printf("[X] No files available. Please load files in Stage 1 first.\n");
         return;
@@ -2982,25 +2982,25 @@ void saveResultsToFile(void) {
         return;
     }
 
-    // 2. 清理用户输入的文件名
+    // 2. Clean up the filename entered by the user.
     char base[512];
     strncpy(base, outputFilePath, sizeof(base) - 1);
     base[sizeof(base) - 1] = '\0';
     strip_quotes(base);
 
-    // 如果用户没写扩展名，默认加 .txt
+    // If the user did not provide an extension, default to .txt.
     char* dot = strrchr(base, '.');
     if (dot == NULL) {
         strcat(base, ".txt");
     }
 
-    // base 现在一定是 某个名字.xxx
-    // 先生成 txt_path
+    // At this point, `base` is guaranteed to be of the form name.xxx.
+    // First build txt_path.
     char txt_path[512];
     strncpy(txt_path, base, sizeof(txt_path) - 1);
     txt_path[sizeof(txt_path) - 1] = '\0';
 
-    // 再从 txt_path 生成 csv_path（把扩展改成 .csv）
+    // Then derive csv_path from txt_path by changing the extension to .csv.
     char csv_path[512];
     strncpy(csv_path, txt_path, sizeof(csv_path) - 1);
     csv_path[sizeof(csv_path) - 1] = '\0';
@@ -3013,7 +3013,7 @@ void saveResultsToFile(void) {
         strcat(csv_path, ".csv");
     }
 
-    // ===== 3. 先生成 TXT 报告 =====
+    // ===== 3. Generate the TXT report first. =====
 #ifdef _WIN32
     FILE* f_txt = fopen_u8(txt_path, "w");
 #else
@@ -3030,11 +3030,11 @@ void saveResultsToFile(void) {
     fclose(f_txt);
     printf("\nSaved TEXT report to %s\n", txt_path);
 
-    // ===== 4. 再问你要不要 CSV 版本 =====
+    // ===== 4. Ask the user whether a CSV version is also needed. =====
     printf("Do you also want a CSV version for spreadsheets? (y/n): ");
     char ans[16];
     if (!read_line(ans, sizeof(ans))) {
-        // 读不到就当作不需要
+        // If input cannot be read, treat it as "no".
         return;
     }
 
@@ -3043,7 +3043,7 @@ void saveResultsToFile(void) {
         return;
     }
 
-    // ===== 5. 生成 CSV 报告 =====
+    // ===== 5. Generate the CSV report. =====
 #ifdef _WIN32
     FILE* f_csv = fopen_u8(csv_path, "w");
 #else
@@ -3060,7 +3060,7 @@ void saveResultsToFile(void) {
     fclose(f_csv);
     printf("Saved CSV report to %s\n", csv_path);
 
-    // Console output summary（简单提醒一下）
+    // Console output summary
     printf("Your reports include:\n");
     printf(" - TEXT report: %s\n", txt_path);
     printf(" - CSV  report: %s\n", csv_path);
@@ -3079,15 +3079,15 @@ bool isCSVFile(const char* filename) {
 void processCSVFile(FILE* f, char (*targetWords)[50], int* targetWordCount) {
     char line[4096];
     int columnCount = 0;
-    char* columns[100]; // 假设最多100列
-
+    char* columns[100]; // Assume at most 100 columns per row.
+    
     printf("Processing your CSV file...\n");
 
     while (fgets(line, sizeof(line), f) && *targetWordCount < MAX_WORDS) {
-        // 移除行尾换行符
+        // Remove trailing newline characters.
         line[strcspn(line, "\n\r")] = '\0';
 
-        // CSV解析：简单的逗号分割
+        // Simple CSV parsing: split the line by commas.
         columnCount = 0;
         char* token = strtok(line, ",");
         while (token != NULL && columnCount < 100) {
@@ -3095,17 +3095,17 @@ void processCSVFile(FILE* f, char (*targetWords)[50], int* targetWordCount) {
             token = strtok(NULL, ",");
         }
 
-        // 处理每一列
+        // Process each column independently.
         for (int i = 0; i < columnCount && *targetWordCount < MAX_WORDS; i++) {
-            // 复制列内容到临时缓冲区
+            // Copy the column text into a temporary buffer.
             char columnText[256];
             strncpy(columnText, columns[i], sizeof(columnText) - 1);
             columnText[sizeof(columnText) - 1] = '\0';
 
-            // 规范化文本
+            // Normalise the text (e.g. lowercasing, stripping punctuation, etc.).
             normalize_line(columnText);
 
-            // 分词处理
+            // Tokenise the normalised text into individual words.
             char* word = strtok(columnText, " \t\r\n");
             while (word != NULL && *targetWordCount < MAX_WORDS) {
                 size_t wordLen = strlen(word);
@@ -3137,6 +3137,7 @@ void handleFileMenu() {
             continue;
         }
 
+        // Load a file into slot 1
         if (strcmp(subChoice, "1") == 0) {
             printf("Enter file path for File 1 (supports .txt and .csv):\n> ");
             if (!read_line(inputFilePath1, sizeof(inputFilePath1))) {
@@ -3150,6 +3151,7 @@ void handleFileMenu() {
             clean_path(inputFilePath1);
             loadTextFile(1);
         }
+        // Load a file into slot 2
         else if (strcmp(subChoice, "2") == 0) {
             printf("Enter file path for File 2 (supports .txt and .csv):\n> ");
             if (!read_line(inputFilePath2, sizeof(inputFilePath2))) {
@@ -3163,12 +3165,15 @@ void handleFileMenu() {
             clean_path(inputFilePath2);
             loadTextFile(2);
         }
+        // Display history of File 1
         else if (strcmp(subChoice, "3") == 0) {
             showFileHistory(1);
         }
+        // Display history of File 2
         else if (strcmp(subChoice, "4") == 0) {
             showFileHistory(2);
         }
+        // Return to main menu
         else if (strcmp(subChoice, "5") == 0) {
             printf("Returning to main menu...\n");
             break;
@@ -3198,12 +3203,12 @@ void showFileHistory(int fileNumber) {
     cleanPath[sizeof(cleanPath) - 1] = '\0';
     strip_quotes(cleanPath);
 
-    // Determine original file type and processed file type
+    // Identify original file type and indicate the processed format.
     bool isCSV = isCSVFile(cleanPath);
     const char* originalType = isCSV ? "CSV" : "txt";
     const char* processedType = "txt"; // CSV files are always converted to text format
 
-    // Create converted file path (replace .csv with .txt if it's a CSV file)
+    // Build an equivalent .txt path for CSV files.
     char convertedPath[256];
     strncpy(convertedPath, cleanPath, sizeof(convertedPath) - 1);
     convertedPath[sizeof(convertedPath) - 1] = '\0';
@@ -3221,14 +3226,14 @@ void showFileHistory(int fileNumber) {
         printf("Processed as: %s\n", processedType);
     }
     else {
-        // For text files, just show the original path
+        // Show basic metadata for text files.
         printf("File path: %s\n", cleanPath);
         printf("File type: %s\n", originalType);
     }
 
     printf("Total words loaded: %d\n", wordCount);
 
-    // 显示前10个单词作为样本
+    //  Display the first 10 words as a preview sample.
     char (*words)[50] = (fileNumber == 1) ? words1 : words2;
     int sampleCount = (wordCount < 10) ? wordCount : 10;
     printf("Sample words (%d): ", sampleCount);
@@ -3271,14 +3276,14 @@ void sort_and_show_topN_toxic(SortAlg alg, int topN) {
     char (*w)[50]; int wc; pick_tokens(&w, &wc);
     if (!w || wc == 0) { printf("[!] No text loaded.\n"); return; }
 
-    // 先做全量词频
+    // First build the full frequency list.
     Pair* all = (Pair*)malloc(sizeof(Pair) * 6000);
     Pair* tox = (Pair*)malloc(sizeof(Pair) * 6000);
     if (!all || !tox) { printf("[!] OOM\n"); free(all); free(tox); return; }
 
     int nAll = build_pairs_from_tokens(w, wc, all, 6000);
 
-    // 过滤毒词
+    // Extract only the toxic words.
     int nT = 0;
     for (int i = 0; i < nAll; ++i) {
         if (is_toxic_word(all[i].word)) tox[nT++] = all[i];
@@ -3286,7 +3291,8 @@ void sort_and_show_topN_toxic(SortAlg alg, int topN) {
 
     if (nT == 0) { printf("[i] No toxic words found.\n"); free(all); free(tox); return; }
 
-    sort_pairs(tox, nT, KEY_FREQ_DESC, alg); // 毒词一般按频率降序
+    // Toxic words are typically sorted by descending frequency.
+    sort_pairs(tox, nT, KEY_FREQ_DESC, alg); 
     if (topN > nT) topN = nT;
 
     printf("\n-- Toxic Top %d (freq desc, %s) --\n",
@@ -3328,7 +3334,7 @@ void compare_algorithms_topN(int topN) {
 
     SortKey key = g_key;
 
-    // ⬇️ 每种算法单独统计
+    // Measure statistics for each algorithm independently.
     SortStats sB, sQ, sM;
 
     stats_reset(); sort_pairs(a, n, key, ALG_BUBBLE); sB = g_stats;
@@ -3341,7 +3347,7 @@ void compare_algorithms_topN(int topN) {
         key == KEY_FREQ_DESC ? "freq desc" : "A→Z",
         g_use_secondary_tiebreak ? "ON" : "OFF");
 
-    // ------- 三列排版：Bubble / Quick / Merge 并排显示 -------
+    // Print three columns side by side: Bubble / Quick / Merge.
     printf("\n%-4s | %-20s %6s | %-20s %6s | %-20s %6s\n",
         "Rank",
         "Bubble", "count",
@@ -3357,7 +3363,7 @@ void compare_algorithms_topN(int topN) {
             c[i].word, c[i].count);
     }
 
-    // 稳定性一致性检查（看前 cap 个是否完全一样）
+    // Stability check: compare whether the first `cap` entries are identical across algorithms.
     int agree = 1, cap = topN < 30 ? topN : 30;
     for (int i = 0; i < cap; i++) {
         if (strcmp(a[i].word, b[i].word) != 0 ||
@@ -3370,7 +3376,7 @@ void compare_algorithms_topN(int topN) {
     printf("\n[Stability] Top %d %s across algorithms.\n",
         cap, agree ? "ARE IDENTICAL" : "DIFFER");
 
-    //  性能对比表（保持你原来的格式）
+    //  Performance comparison table (keeps the original formatting).
     printf("\n%-8s | %10s | %12s | %12s\n",
         "Alg", "Time(ms)", "Comparisons", "Moves");
     printf("----------+------------+--------------+--------------\n");
@@ -3404,7 +3410,7 @@ void show_extra_summary(void) {
     int total = toxic_tokens + nontoxic_tokens;
     double tox_ratio = total ? (100.0 * toxic_tokens / total) : 0.0;
 
-    // 也可计算"类型"层面的比例（unique）
+    // Also compute ratios at the "type" level (unique words).
     int toxic_types = 0, nontoxic_types = 0;
     for (int i = 0; i < n; i++) {
         if (is_toxic_word(all[i].word)) toxic_types++;
@@ -3442,10 +3448,11 @@ void list_alpha_all(void) {
     }
 
     int n = build_pairs_from_tokens(w, wc, arr, 6000);
-    sort_pairs(arr, n, KEY_ALPHA, g_alg); // 按字母序排序
+    // Sort the unique words alphabetically.
+    sort_pairs(arr, n, KEY_ALPHA, g_alg); 
 
-    const int perPage = 50;  // 每页显示多少个词，可以自己改
-    int page = 0;            // 当前页，从 0 开始
+    const int perPage = 50;  
+    int page = 0;           
     char cmd[16];
 
     for (;;) {
@@ -3463,7 +3470,7 @@ void list_alpha_all(void) {
             printf("%-20s %d\n", arr[i].word, arr[i].count);
         }
 
-        // 提示操作
+        // Prompt the user for navigation commands.
         if (page == 0 && end == n) {
             printf("[Q]uit : ");
         }
@@ -3480,12 +3487,12 @@ void list_alpha_all(void) {
         if (!read_line(cmd, sizeof(cmd))) {
             break;
         }
-        // 空输入：什么都不做，重新问
+        // Empty input: do nothing and re-prompt.
         if (cmd[0] == '\0') {
             continue;
         }
 
-        // 严格匹配：只接受单个字符 n / p / q（大小写都可以）
+        // Strictly parse: only accept a single character n / p / q (case-insensitive).
         if (strcmp(cmd, "n") == 0 || strcmp(cmd, "N") == 0) {
             if ((page + 1) * perPage >= n) {
                 printf("[i] Already at last page.\n");
@@ -3506,7 +3513,7 @@ void list_alpha_all(void) {
             break;
         }
         else {
-            // 像 "npq"、"nn"、"x" 都会走到这里
+            // Inputs like "npq", "nn", or "x" will fall into this branch.
             printf("[i] Unknown command. Please use n / p / q.\n");
         }
     }
@@ -3555,13 +3562,13 @@ static int load_toxicwords(void) {
 void menu_sort_and_report(void) {
     int sub = -1;
     if (!auto_select_source_file()) {
-        // 没有任何文件 → 提示后直接回主菜单
+        // No files available → show a message and return directly to the main menu.
         printf("\n[X] No files available for sorting/reporting. "
             "Please load files in Stage 1 first.\n");
         return;
     }
     do {
-        // 每次进入循环都确认当前 source（防止 Stage1 中途换文件）
+        // On each loop, confirm the current source (in case Stage 1 changed the active file).
         if (!auto_select_source_file()) {
             printf("\n[X] No files available.\n");
             return;
@@ -3582,11 +3589,11 @@ void menu_sort_and_report(void) {
         printf("3. Toggle secondary tiebreak (current: %s)\n",
             g_use_secondary_tiebreak ? "ON (alpha as tiebreak)" : "OFF (pure primary key)");
         printf("4. Set Top N (current: %d)\n", g_topN);
-        printf("5. Show Top N (ALL words)\n");           // Pass: Top N 高频词
-        printf("6. Show Top N (TOXIC words only)\n");    // Merit: 单独Top N毒词
-        printf("7. Compare algorithms (Top N)\n");       // Distinction: 多算法比较
-        printf("8. Extra summary (toxic ratio)\n");      // Distinction: 额外统计
-        printf("9  List ALL words alphabetically\n");    // Pass: 按字母排序展示（可选）
+        printf("5. Show Top N (ALL words)\n");           
+        printf("6. Show Top N (TOXIC words only)\n");    
+        printf("7. Compare algorithms (Top N)\n");   
+        printf("8. Extra summary (toxic ratio)\n");  
+        printf("9  List ALL words alphabetically\n");  
         printf("0. Back\n");
         printf("Select: ");
 
@@ -3604,7 +3611,7 @@ void menu_sort_and_report(void) {
 
         switch (sub) {
         case 1: {
-            // 设置排序键（频率/字母）
+            // Configure sorting key (frequency or alphabetical).
             int k;
             printf("Choose key: 1=Frequency desc, 2=Alphabetical : ");
             if (scanf("%d", &k) == 1) {
@@ -3616,7 +3623,7 @@ void menu_sort_and_report(void) {
             while ((c = getchar()) != '\n' && c != EOF);
         } break;
         case 2: {
-            //设置算法（冒泡/快速/归并）
+            //Configure sorting algorithm (Bubble / Quick / Merge).
             int a;
             printf("Choose algorithm: 1=Bubble  2=Quick  3=Merge : ");
             if (scanf("%d", &a) == 1) {
@@ -3631,17 +3638,17 @@ void menu_sort_and_report(void) {
                 g_use_secondary_tiebreak ? "ON" : "OFF");
             break;
         case 4: {
-            //设置 Top N
+            //Configure Top N value for reporting.
             int n;
             printf("Enter Top N (>=1): ");
             if (scanf("%d", &n) == 1 && n > 0) g_topN = n;
         } break;
         case 5:
-            //显示 Top N（全词）
+            //Show Top N words across all tokens.
             sort_and_show_topN_all(g_key, g_alg, g_topN);
             break;
         case 6:
-            // 毒词通常只看频率高→低；若你要支持字母序也可传 g_key
+            //Show Top N toxic words only; typically sorted by frequency desc.
             sort_and_show_topN_toxic(g_alg, g_topN);
             break;
         case 7:
@@ -3664,13 +3671,13 @@ void menu_sort_and_report(void) {
 // Compare two Pair items by the primary key only (frequency or alphabet).
 static int cmp_primary(const Pair* a, const Pair* b, SortKey key) {
     if (key == KEY_FREQ_DESC) {
-        if (a->count != b->count) return (b->count - a->count); // 频率降序
-        return 0; // 同频不决定先后
+        if (a->count != b->count) return (b->count - a->count); // Sort by frequency in descending order.
+        return 0; // If frequencies are equal, primary key does not decide the order.
     }
     else { // KEY_ALPHA
         int s = strcmp(a->word, b->word);
         if (s != 0) return s;
-        return 0; // 同字母不决定先后
+        return 0; // If words are identical, primary key does not decide the order.
     }
 }
 
@@ -3679,12 +3686,14 @@ static int cmp_pairs(const Pair* a, const Pair* b, SortKey key) {
     int c = cmp_primary(a, b, key);
     if (c != 0 || !g_use_secondary_tiebreak) return c;
 
-    // 二级键（你之前的行为）
+    // Apply the secondary key when primary key is tied.
     if (key == KEY_FREQ_DESC) {
-        return strcmp(a->word, b->word);           // 同频时按字母序
+        // When frequencies are equal, fall back to alphabetical order.
+        return strcmp(a->word, b->word);          
     }
     else { // KEY_ALPHA
-        return (b->count - a->count);              // 同字母时频率高的在前
+        // When words are equal, fall back to frequency (higher frequency first).
+        return (b->count - a->count);           
     }
 }
 
@@ -3704,7 +3713,7 @@ static void bubble_sort_pairs(Pair a[], int n, SortKey key) {
 
 // Partition function for Quick Sort on Pair arrays, tracking moves and comparisons.
 static int partition_pairs(Pair a[], int l, int r, SortKey key) {
-    Pair pivot = a[r];               g_stats.moves++; // 读到寄存器算一次
+    Pair pivot = a[r];               g_stats.moves++; // Reading pivot into a local variable counts as one move.
     int i = l - 1;
     for (int j = l; j < r; ++j) {
         if (cmp_with_stats(&a[j], &pivot, key) <= 0) {
@@ -3767,7 +3776,7 @@ static void sort_pairs(Pair a[], int n, SortKey key, SortAlg alg) {
 static void pick_tokens(char (**out_words)[50], int* out_count) {
     if (g_use_file == 1 && file1Loaded) { *out_words = words1; *out_count = wordCount1; return; }
     if (g_use_file == 2 && file2Loaded) { *out_words = words2; *out_count = wordCount2; return; }
-    // Auto 模式：沿用你现在的优先级
+    // Auto mode: fall back to the default priority (prefer File 1 if available, otherwise File 2).
     if (file1Loaded) { *out_words = words1; *out_count = wordCount1; return; }
     if (file2Loaded) { *out_words = words2; *out_count = wordCount2; return; }
     *out_words = NULL; *out_count = 0;
